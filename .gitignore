@@ -17,3 +17,11 @@ DMG_Root/
 *.fls
 *.fdb_latexmk
 *.synctex.gz
+
+# LaTeX の追加中間ファイル
+*.xdv
+*.bbl
+*.blg
+*.nav
+*.snm
+*.vrb

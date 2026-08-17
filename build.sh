@@ -73,6 +73,20 @@ if [ "${1:-}" = "preview" ]; then
     exec "${BUILD_DIR}/panel-preview" "${2:-}" "${3:-${BUILD_DIR}/panel-preview.png}"
 fi
 
+# --- 技術解説の図表に使うデータの書き出し ---
+if [ "${1:-}" = "data" ]; then
+    mkdir -p "${BUILD_DIR}"
+    DATA_SOURCES=()
+    for f in "${SOURCES[@]}"; do
+        [ "$(basename "$f")" = "main.swift" ] && continue
+        DATA_SOURCES+=("$f")
+    done
+    swiftc -swift-version 5 -O \
+        -o "${BUILD_DIR}/export-data" \
+        "${DATA_SOURCES[@]}" Tools/export_data/main.swift
+    exec "${BUILD_DIR}/export-data" "${2:-docs/tex/data}"
+fi
+
 echo "==> ソース: ${#SOURCES[@]} ファイル"
 mkdir -p "${BUILD_DIR}"
 

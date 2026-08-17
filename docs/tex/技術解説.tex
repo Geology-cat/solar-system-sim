@@ -1,0 +1,1018 @@
+% 太陽系シミュレーター 技術・理論解説
+%
+% コンパイル:
+%   cd docs/tex && latexmk -lualatex 技術解説.tex
+%   (グラフのデータは ../../build.sh data で生成する)
+
+\documentclass[a4paper,11pt]{ltjsarticle}
+
+\usepackage{luatexja-fontspec}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{siunitx}
+\usepackage{tikz}
+\usepackage{tikz-3dplot}
+\usepackage{pgfplots}
+\usepackage[margin=25mm]{geometry}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+
+\pgfplotsset{compat=1.17}
+\usetikzlibrary{arrows.meta,angles,quotes,calc,patterns,decorations.markings}
+
+% ---- 図の共通規約 -------------------------------------------------------
+% 役割と色の対応。本文中の言及も同じ色で行う。
+\definecolor{eclipticC}{RGB}{ 60,110, 40}   % 黄道面・基準面
+\definecolor{orbitC}   {RGB}{200,110,  0}   % 惑星の軌道・軌道面
+\definecolor{axisC}    {RGB}{110, 60,150}   % 軸・極
+\definecolor{angleC}   {RGB}{190, 40, 40}   % 角度
+\definecolor{sunC}     {RGB}{215,160,  0}   % 太陽
+\definecolor{earthC}   {RGB}{ 30, 90,180}   % 地球
+\definecolor{venusC}   {RGB}{205,120, 30}   % 内惑星
+\definecolor{scaffoldC}{RGB}{150,150,150}   % 足場（補助線）
+
+\tikzset{
+  every picture/.append style={line cap=round, line join=round, font=\small},
+  whitebg/.style={fill=white, fill opacity=0.88, text opacity=1,
+                  inner sep=1pt, rounded corners=1pt},
+  pt/.style={circle, inner sep=1.6pt, fill},
+}
+
+\newcommand{\vek}[1]{\boldsymbol{#1}}
+\newcommand{\uvek}[1]{\hat{\boldsymbol{#1}}}
+
+\title{太陽系シミュレーター\\[2mm]\large 技術・理論解説}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+本書は macOS 版「太陽系シミュレーター」の内部で行われている計算を、
+理論と実装の両面から解説する。前半では JPL の近似軌道要素から
+惑星の日心黄道座標を求める手順を、後半では内惑星（水星・金星）の
+離角・満ち欠け・視直径と、東方／西方最大離角・内合・外合の
+発生時刻を求める手順を扱う。
+最後に、実際に得られる精度を国立天文台が公表する暦と突き合わせて検証し、
+本シミュレーターで補正していない効果を明記する。
+\end{abstract}
+
+\tableofcontents
+
+% =========================================================================
+\section{本書の位置づけと計算の全体像}
+
+本シミュレーターは、任意の日時における太陽系の惑星配置を黄道面の俯瞰図として描き、
+あわせて内惑星の見え方をサイドパネルに表示する。
+計算は次の 3 段階からなる。
+
+\begin{enumerate}
+  \item \textbf{軌道要素から位置へ}（第 \ref{sec:position} 節）\\
+        JPL 公開の近似ケプラー要素を時刻で外挿し、ケプラー方程式を解いて
+        各惑星の日心黄道直交座標 $\vek{r}(t)$ を得る。
+  \item \textbf{位置から見え方へ}（第 \ref{sec:appearance} 節）\\
+        太陽・地球・惑星の 3 点がつくる三角形から、
+        離角・位相角・輝面比・視直径を求める。
+  \item \textbf{見え方から現象時刻へ}（第 \ref{sec:events} 節）\\
+        「離角が極大」「地心黄経差が零」といった条件を満たす時刻を
+        数値的に探索し、合や最大離角の日時を得る。
+\end{enumerate}
+
+第 \ref{sec:accuracy} 節では、こうして得た結果の精度を検証する。
+先に結論を示すと、2026 年の水星に起こる 12 の現象について、
+本シミュレーターの予報は国立天文台が公表する日付とすべて一致する
+（表 \ref{tab:phenomena}）。
+
+% =========================================================================
+\section{座標系と時刻系}
+
+\subsection{基準とする座標系}
+
+本シミュレーターは、すべての位置を
+\textbf{J2000.0 の平均黄道・平均分点}を基準とする日心黄道直交座標で扱う。
+
+\begin{align}
+  x &: \text{J2000.0 の春分点（\raisebox{0pt}{\ensuremath{\Upsilon}}）の方向}\\
+  y &: \text{黄道面内で } x \text{ から黄経 } +90^\circ \text{ の方向}\\
+  z &: \text{北黄極の方向}
+\end{align}
+
+この座標系は時刻によらず固定されている。
+実際の春分点は歳差によって年に約 $50.3''$ ずつ西へ移動するため、
+J2000.0 から離れた時代を扱うほど、
+「その時代の真の春分点」と本座標系の $x$ 軸とはずれていく。
+この点は精度の議論（第 \ref{sec:accuracy} 節）で改めて確認する。
+
+\subsection{時刻の扱い}
+
+軌道要素の外挿には、元期 J2000.0 からのユリウス世紀
+\begin{equation}
+  T = \frac{\mathit{JD} - 2451545.0}{36525}
+\end{equation}
+を使う。実装では UNIX 時刻から直接
+\begin{equation}
+  T = \frac{(t_{\text{unix}} - 946728000)/86400}{36525}
+\end{equation}
+として求めている。
+
+厳密には J2000.0 は地球時 (TT) で定義され、協定世界時 (UTC) との差は
+$\Delta T \approx 69$ 秒ある。この差が惑星の平均黄経に与える影響は、
+最も速く動く水星でも $0.12''$ 程度であり、
+本シミュレーターが依拠する近似軌道要素の誤差（分角のオーダー）に比べて
+無視できる。
+
+画面表示および現象時刻の表示には日本標準時 (JST, UTC$+9$) を用いる。
+日本標準時に夏時間はないため、時刻換算は $+9$ 時間の一律加算でよい。
+
+% =========================================================================
+\section{軌道要素から惑星の位置を求める}
+\label{sec:position}
+
+\subsection{ケプラーの 6 要素}
+
+二体問題における惑星の軌道は、6 つの量で完全に決まる。
+そのうち 5 つが軌道の形と空間内での向きを、残る 1 つが軌道上の位置を表す。
+
+\begin{description}
+  \item[軌道長半径 $a$] 楕円の長軸の半分。軌道の大きさ。単位は天文単位 (au)。
+  \item[離心率 $e$] 楕円のつぶれ具合。$e=0$ で円、$1$ に近いほど細長い。
+  \item[軌道傾斜角 $I$] 黄道面に対する軌道面の傾き。
+  \item[昇交点黄経 $\Omega$] 春分点方向から、軌道が黄道面を南から北へ
+        横切る点（昇交点 \ensuremath{\Omega}）までの黄経。
+  \item[近日点引数 $\omega$] 昇交点から近日点までを軌道面内で測った角。
+  \item[平均近点角 $M$] 惑星が等速円運動をすると仮定したときの近日点からの角。
+        時間の一次関数として増加する。
+\end{description}
+
+JPL の表では $\omega$ と $M$ の代わりに、
+近日点黄経 $\varpi = \Omega + \omega$ と平均黄経 $L = \varpi + M$ が与えられる。
+これらの空間的な関係を図 \ref{fig:elements} に示す。
+
+% ---- 図 1: 軌道要素の 3D 図 --------------------------------------------
+\begin{figure}[htbp]
+\centering
+\tdplotsetmaincoords{70}{110}
+\begin{tikzpicture}[tdplot_main_coords, scale=1.55]
+
+  % 描画に使う値（本文の説明用に選んだ代表値）
+  % Omega = 50 deg, I = 30 deg, omega = 40 deg, a = 2, e = 0.35
+  % 昇交点方向    n = (cos50, sin50, 0)
+  % 軌道面内で n に直交する単位ベクトル
+  %              p = (-sin50 cos30, cos50 cos30, sin30)
+  % 真近点角 nu における位置は
+  %   r(nu) = a(1-e^2)/(1+e cos nu) * ( n cos(omega+nu) + p sin(omega+nu) )
+  % a(1-e^2) = 1.755
+
+  % --- レイヤ 1: 黄道面 ---
+  \fill[eclipticC, opacity=0.07]
+    (-2.4,-2.4,0) -- (2.4,-2.4,0) -- (2.4,2.4,0) -- (-2.4,2.4,0) -- cycle;
+  \draw[eclipticC!60, thin]
+    (-2.4,-2.4,0) -- (2.4,-2.4,0) -- (2.4,2.4,0) -- (-2.4,2.4,0) -- cycle;
+  \node[eclipticC, font=\footnotesize] at (-1.75,-2.05,0) {黄道面};
+
+  % --- レイヤ 2: 軌道の黄道面より下（背面）の部分 ---
+  % nu で omega+nu が 180..360 のとき z<0
+  \draw[orbitC, densely dashed, thin, opacity=0.45]
+    plot[domain=140:320, samples=90, variable=\t]
+      ({1.755/(1+0.35*cos(\t)) * ( cos(50)*cos(40+\t) - sin(50)*cos(30)*sin(40+\t) )},
+       {1.755/(1+0.35*cos(\t)) * ( sin(50)*cos(40+\t) + cos(50)*cos(30)*sin(40+\t) )},
+       {1.755/(1+0.35*cos(\t)) * ( sin(30)*sin(40+\t) )});
+
+  % --- レイヤ 3: 足場（軸・交点線） ---
+  \draw[scaffoldC, dash dot, thin] (0,0,0) -- (2.6,0,0)
+    node[anchor=north west, inner sep=1pt, black]{$x$ （春分点 \ensuremath{\Upsilon}）};
+  \draw[scaffoldC, dash dot, thin] (0,0,0) -- (0,2.6,0)
+    node[anchor=south west, inner sep=1pt, black]{$y$};
+  \draw[axisC, dash dot, thin] (0,0,0) -- (0,0,1.9)
+    node[anchor=south, inner sep=1pt]{$z$ （北黄極）};
+
+  % 交点線（昇交点 - 降交点を結ぶ直線）
+  \draw[scaffoldC!80, dotted, thin]
+    ({-2.2*cos(50)},{-2.2*sin(50)},0) -- ({2.2*cos(50)},{2.2*sin(50)},0);
+
+  % --- レイヤ 4: 軌道の黄道面より上（前面）の部分 ---
+  \draw[orbitC, very thick]
+    plot[domain=-40:140, samples=90, variable=\t]
+      ({1.755/(1+0.35*cos(\t)) * ( cos(50)*cos(40+\t) - sin(50)*cos(30)*sin(40+\t) )},
+       {1.755/(1+0.35*cos(\t)) * ( sin(50)*cos(40+\t) + cos(50)*cos(30)*sin(40+\t) )},
+       {1.755/(1+0.35*cos(\t)) * ( sin(30)*sin(40+\t) )});
+
+  % --- レイヤ 5: 角度弧 ---
+  % Omega: 黄道面内 (z=0)、x 軸から交点線まで。半径 1.05
+  \draw[angleC, thick]
+    plot[domain=0:50, samples=40, variable=\t]
+      ({1.05*cos(\t)},{1.05*sin(\t)},0);
+  \node[angleC] at ({1.28*cos(25)},{1.28*sin(25)},0) {$\Omega$};
+
+  % I: 交点線に垂直な平面内。基底は m=(-sin50, cos50,0) と z。半径 0.95
+  \draw[angleC, thick]
+    plot[domain=0:30, samples=30, variable=\t]
+      ({-0.95*sin(50)*cos(\t)},{0.95*cos(50)*cos(\t)},{0.95*sin(\t)});
+  % 弧の脚
+  \draw[scaffoldC, thin] (0,0,0) -- ({-1.05*sin(50)},{1.05*cos(50)},0);
+  \node[angleC] at ({-0.72*sin(50)*cos(17)},{0.72*cos(50)*cos(17)},{0.72*sin(17)+0.30}) {$I$};
+
+  % omega: 軌道面内、昇交点方向 n から近日点方向まで。半径 0.62
+  \draw[angleC, thick]
+    plot[domain=0:40, samples=35, variable=\t]
+      ({0.62*( cos(50)*cos(\t) - sin(50)*cos(30)*sin(\t) )},
+       {0.62*( sin(50)*cos(\t) + cos(50)*cos(30)*sin(\t) )},
+       {0.62*( sin(30)*sin(\t) )});
+  \node[angleC] at
+      ({0.86*( cos(50)*cos(20) - sin(50)*cos(30)*sin(20) )},
+       {0.86*( sin(50)*cos(20) + cos(50)*cos(30)*sin(20) )},
+       {0.86*( sin(30)*sin(20) )+0.06}) {$\omega$};
+
+  % --- レイヤ 6: 点 ---
+  \node[pt, sunC] at (0,0,0) {};
+  \node[sunC, font=\footnotesize, anchor=north east, inner sep=1pt]
+    at (-0.10,-0.16,0) {太陽};
+
+  % 昇交点（交点線上、n 方向）
+  \node[pt, eclipticC, inner sep=1.3pt] at ({1.42*cos(50)},{1.42*sin(50)},0) {};
+  \node[eclipticC, font=\footnotesize, anchor=west]
+    at ({1.42*cos(50)},{1.42*sin(50)},0) {昇交点 \ensuremath{\Omega}};
+
+  % 近日点（nu = 0）
+  \node[pt, orbitC, inner sep=1.3pt] at
+      ({1.3*( cos(50)*cos(40) - sin(50)*cos(30)*sin(40) )},
+       {1.3*( sin(50)*cos(40) + cos(50)*cos(30)*sin(40) )},
+       {1.3*( sin(30)*sin(40) )}) {};
+  \node[orbitC, font=\footnotesize, anchor=south west] at
+      ({1.3*( cos(50)*cos(40) - sin(50)*cos(30)*sin(40) )},
+       {1.3*( sin(50)*cos(40) + cos(50)*cos(30)*sin(40) )},
+       {1.3*( sin(30)*sin(40) )}) {近日点};
+
+  % 惑星（真近点角 70 度）
+  \node[pt, venusC, inner sep=1.5pt] at
+      ({1.755/(1+0.35*cos(70)) * ( cos(50)*cos(110) - sin(50)*cos(30)*sin(110) )},
+       {1.755/(1+0.35*cos(70)) * ( sin(50)*cos(110) + cos(50)*cos(30)*sin(110) )},
+       {1.755/(1+0.35*cos(70)) * ( sin(30)*sin(110) )}) {};
+  \node[venusC, font=\footnotesize, anchor=south] at
+      ({1.755/(1+0.35*cos(70)) * ( cos(50)*cos(110) - sin(50)*cos(30)*sin(110) )},
+       {1.755/(1+0.35*cos(70)) * ( sin(50)*cos(110) + cos(50)*cos(30)*sin(110) )},
+       {1.755/(1+0.35*cos(70)) * ( sin(30)*sin(110) )+0.08}) {惑星};
+
+\end{tikzpicture}
+\caption{ケプラー軌道要素の空間的関係。
+薄い緑の面が黄道面、橙の曲線が惑星の楕円軌道で、
+黄道面より下（背面）にあたる部分を破線で示す。
+点線は軌道面と黄道面の交線。
+$\Omega$ は黄道面内で春分点方向から昇交点まで、
+$I$ は交線に垂直な平面内で黄道面から軌道面まで、
+$\omega$ は軌道面内で昇交点から近日点まで測った角である。
+描画に用いた値は $\Omega=50^\circ$, $I=30^\circ$, $\omega=40^\circ$,
+$e=0.35$（実際の惑星より誇張してある）。}
+\label{fig:elements}
+\end{figure}
+
+\subsection{要素の時間変化}
+
+JPL の表（\emph{Keplerian Elements for Approximate Positions of the Major
+Planets}, Table 2b, 有効範囲 3000 BC〜3000 AD）は、
+各要素について J2000.0 での値とユリウス世紀あたりの変化率を与える。
+本シミュレーターはこれを一次で外挿する。
+
+\begin{equation}
+  a(T) = a_0 + \dot{a}\,T,\quad
+  e(T) = e_0 + \dot{e}\,T,\quad
+  I(T) = I_0 + \dot{I}\,T,\ \dots
+\end{equation}
+
+平均近点角は
+\begin{equation}
+  M = L - \varpi
+\end{equation}
+で得られるが、木星以遠の 5 天体については、
+長周期の相互摂動を近似する補正項が表に添えられている。
+\begin{equation}
+  M = L - \varpi + b\,T^2 + c\cos(f T) + s\sin(f T)
+  \label{eq:outer}
+\end{equation}
+ここで $f$ は度／世紀の単位で与えられるので、
+三角関数に渡す前にラジアンへ換算する必要がある。
+内惑星（水星・金星）では $b=c=s=0$ であり、この補正は効かない。
+
+\subsection{ケプラー方程式を解く}
+
+平均近点角 $M$ から離心近点角 $E$ を得るには、超越方程式
+\begin{equation}
+  M = E - e\sin E
+  \label{eq:kepler}
+\end{equation}
+を $E$ について解く必要がある。閉じた形の解はないので数値的に解く。
+本実装はニュートン・ラフソン法を使う。
+$g(E) = E - e\sin E - M$ とおくと $g'(E) = 1 - e\cos E$ なので、
+\begin{equation}
+  E_{n+1} = E_n - \frac{E_n - e\sin E_n - M}{1 - e\cos E_n}
+\end{equation}
+を反復する。初期値には一次近似 $E_0 = M + e\sin M$ を用い、
+$|\Delta E| < 10^{-12}\ \text{rad}$（約 $2\times10^{-7}$ 秒角）で打ち切る。
+太陽系の惑星は最も離心率の大きい冥王星でも $e \approx 0.25$ であり、
+この初期値なら数回の反復で収束する。
+
+\subsection{軌道面から黄道面へ}
+
+$E$ が求まれば、軌道面内の直交座標（近日点方向を $x'$ 軸に取る）が得られる。
+\begin{align}
+  x' &= a(\cos E - e)\\
+  y' &= a\sqrt{1-e^2}\,\sin E
+\end{align}
+
+これを黄道座標へ移すには、$\omega$（軌道面内の回転）、
+$I$（交線まわりの傾け）、$\Omega$（黄道面内の回転）の
+3 回の回転を合成すればよい。合成結果は
+$\vek{r} = x'\,\vek{P} + y'\,\vek{Q}$ と書け、
+係数ベクトル $\vek{P}, \vek{Q}$ は次で与えられる
+\footnote{Murray \& Dermott, \emph{Solar System Dynamics}, eq.~(2.122).}。
+
+\begin{equation}
+  \vek{P} =
+  \begin{pmatrix}
+    \cos\omega\cos\Omega - \sin\omega\sin\Omega\cos I\\
+    \cos\omega\sin\Omega + \sin\omega\cos\Omega\cos I\\
+    \sin\omega\sin I
+  \end{pmatrix},
+  \qquad
+  \vek{Q} =
+  \begin{pmatrix}
+    -\sin\omega\cos\Omega - \cos\omega\sin\Omega\cos I\\
+    -\sin\omega\sin\Omega + \cos\omega\cos\Omega\cos I\\
+    \cos\omega\sin I
+  \end{pmatrix}
+  \label{eq:PQ}
+\end{equation}
+
+\begin{quote}\small
+\textbf{実装上の注意.}
+俯瞰図を描くだけなら $z$ 成分は不要で、
+$\vek{P}, \vek{Q}$ の第 3 成分を計算しなくても図は描ける。
+しかし本書の後半で扱う離角や位相角は、$z$ を落とすと正しく求まらない。
+軌道傾斜角は水星で $7.0^\circ$、金星で $3.4^\circ$ あり、
+水星は日心距離 $0.39\ \mathrm{au}$ に対して最大で $0.047\ \mathrm{au}$ ほど
+黄道面から外れる。この面外成分を無視すると、
+とくに内合の前後で離角が度のオーダーでずれてしまう。
+本シミュレーターは常に 3 次元の $\vek{r}$ を求め、
+俯瞰図の描画のときにだけ $z$ を捨てている。
+\end{quote}
+
+% =========================================================================
+\section{内惑星の見え方}
+\label{sec:appearance}
+
+\subsection{地心ベクトルと三角形}
+
+地球の日心位置を $\vek{r}_\oplus$、惑星の日心位置を $\vek{r}_p$ とすると、
+地球から見た惑星の方向（地心ベクトル）は
+\begin{equation}
+  \vek{\Delta} = \vek{r}_p - \vek{r}_\oplus
+\end{equation}
+であり、地球から見た太陽の方向は $-\vek{r}_\oplus$ である。
+太陽・地球・惑星の 3 点は図 \ref{fig:triangle} の三角形をなす。
+
+% ---- 図 2: 離角と位相角 --------------------------------------------------
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[scale=1.08]
+
+  % 幾何（前もって解いた値）
+  %   S = (0,0), E = (4.2, 0), 惑星 P は日心黄経 70 度、r = 3.04
+  %   P = 3.04*(cos70, sin70) = (1.040, 2.857)
+  %   |SE| = 4.2, |SP| = 3.04, |EP| = 4.259
+  %   E での角（離角 epsilon）      = 42.13 度
+  %   P での角（位相角 i）          = 67.87 度
+  %   S での角（日心離角）          = 70.00 度   （和 = 180 度）
+  %   輝面比 k = (1+cos 67.87)/2 = 0.688
+
+  \coordinate (S) at (0,0);
+  \coordinate (E) at (4.2,0);
+  \coordinate (P) at (1.040,2.857);
+
+  % 内惑星の軌道と地球の軌道（足場）
+  \draw[scaffoldC, dotted, thin] (S) circle (3.04);
+  \draw[scaffoldC, dotted, thin] (S) circle (4.2);
+
+  % 公転の向き
+  \draw[scaffoldC, -{Latex[length=2.2mm]}, thin]
+    (200:4.42) arc (200:225:4.42);
+  \node[scaffoldC, font=\footnotesize] at (216:4.90) {公転・黄経増加の向き};
+
+  % 三角形の辺
+  \draw[sunC, very thick] (S) -- node[below, font=\footnotesize, whitebg]
+       {$R = |\vek{r}_\oplus|$} (E);
+  \draw[venusC, very thick] (S) -- node[above left, font=\footnotesize, whitebg]
+       {$r = |\vek{r}_p|$} (P);
+  \draw[earthC, very thick] (E) -- node[above right, font=\footnotesize, whitebg]
+       {$\Delta = |\vek{\Delta}|$} (P);
+
+  % 角度弧（半径を変えて重なりを防ぐ）
+  \draw[angleC, thick] (E) ++(180:1.30) arc (180:137.87:1.30);
+  \node[angleC] at ($(E)+(159:1.62)$) {$\varepsilon$};
+
+  \draw[angleC, thick] (P) ++(250.00:0.92) arc (250.00:317.87:0.92);
+  \node[angleC] at ($(P)+(284:1.24)$) {$i$};
+
+  \draw[angleC!60, thick] (S) ++(0:0.95) arc (0:70:0.95);
+  \node[angleC!60, font=\footnotesize, whitebg] at (31:1.42) {日心離角};
+
+  % 直角記号のかわりに、地球から太陽・惑星を見る 2 方向を強調
+  \draw[scaffoldC, -{Latex[length=2mm]}, thin] (E) -- ++(180:1.75);
+  \draw[scaffoldC, -{Latex[length=2mm]}, thin] (E) -- ++(137.87:1.75);
+
+  % 点
+  \node[pt, sunC, inner sep=2.4pt] at (S) {};
+  \node[sunC, anchor=north, font=\footnotesize] at ($(S)+(0,-0.22)$) {太陽 $S$};
+  \node[pt, earthC, inner sep=2pt] at (E) {};
+  \node[earthC, anchor=north west, font=\footnotesize] at ($(E)+(0.06,-0.10)$) {地球 $E$};
+  \node[pt, venusC, inner sep=2pt] at (P) {};
+  \node[venusC, anchor=south east, font=\footnotesize] at ($(P)+(-0.06,0.10)$) {惑星 $P$};
+
+\end{tikzpicture}
+\caption{太陽・地球・惑星のなす三角形（黄道面へ投影して示す。実際の計算は 3 次元で行う）。
+北黄極側から見下ろしており、公転および黄経の増加は反時計回り。
+$\varepsilon$ は地球で測った\textbf{離角}、$i$ は惑星で測った\textbf{位相角}である。
+図の配置では惑星の地心黄経が太陽より小さく、西方離角（明けの明星）にあたる。
+太陽・地球を結ぶ線に関して惑星を折り返した配置が東方離角（宵の明星）である。
+描画に用いた値は $r=0.72\ \mathrm{au}$, $R=1.00\ \mathrm{au}$, 日心離角 $70^\circ$ で、
+このとき $\varepsilon=42.1^\circ$, $i=67.9^\circ$, 輝面比 $k=0.688$ となる。}
+\label{fig:triangle}
+\end{figure}
+
+\subsection{離角}
+
+\textbf{離角}（elongation）$\varepsilon$ は、地球から見た太陽の方向と
+惑星の方向のなす角である。
+\begin{equation}
+  \cos\varepsilon
+  = \frac{(-\vek{r}_\oplus)\cdot\vek{\Delta}}
+         {|\vek{r}_\oplus|\,|\vek{\Delta}|}
+  \label{eq:elongation}
+\end{equation}
+
+$\varepsilon$ は $0^\circ$ から $180^\circ$ の値をとるが、これだけでは
+惑星が太陽の東にあるのか西にあるのかが分からない。
+そこで\textbf{地心黄経差}
+\begin{equation}
+  \Delta\lambda = \lambda_p - \lambda_\odot,\qquad
+  \lambda_p = \arctan\!\big(\Delta_y,\ \Delta_x\big),\quad
+  \lambda_\odot = \arctan\!\big(-r_{\oplus y},\ -r_{\oplus x}\big)
+\end{equation}
+を $(-180^\circ, 180^\circ]$ に畳んで符号を見る。
+
+\begin{equation}
+  \Delta\lambda > 0 \ \Longrightarrow\ \textbf{東方離角}\quad(\text{夕方の西空、宵の明星})
+  \qquad
+  \Delta\lambda < 0 \ \Longrightarrow\ \textbf{西方離角}\quad(\text{明け方の東空、明けの明星})
+\end{equation}
+
+黄経は東向きに増えるので、$\Delta\lambda>0$ は惑星が太陽より東にあることを意味する。
+太陽より東にある天体は太陽より遅れて沈むから、日没後の西空に見える。
+これが「宵の明星」である。
+
+\subsection{最大離角}
+
+内惑星は地球より内側を回るので、離角が $180^\circ$（衝）になることはない。
+離角には上限があり、その上限に達する瞬間が\textbf{最大離角}である。
+
+軌道を円と近似すれば、最大離角の幾何は明快である。
+地球から惑星の軌道に引いた視線が軌道に接するとき離角が最大になり、
+このとき $\angle SPE = 90^\circ$、すなわち位相角がちょうど $90^\circ$（半月）になる
+（図 \ref{fig:maxelong}）。したがって
+\begin{equation}
+  \sin\varepsilon_{\max} = \frac{r}{R}
+  \label{eq:maxelong}
+\end{equation}
+
+金星について $r/R = 0.723$ を入れると $\varepsilon_{\max} = 46.3^\circ$、
+水星について $0.387$ を入れると $22.8^\circ$ となる。
+実際には軌道が円ではないため、$r$ と $R$ が毎回異なり最大離角も変動する。
+とくに水星は離心率が $0.206$ と大きく、
+最大離角は $17.9^\circ$ から $27.8^\circ$ まで大きく振れる
+（第 \ref{sec:accuracy} 節の図 \ref{fig:elongdist}）。
+
+% ---- 図 3: 最大離角 -----------------------------------------------------
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[scale=1.02]
+
+  % 幾何
+  %   S=(0,0), E=(4.2,0), r=3.04 (= 0.723 au 相当), R=4.2 (= 1 au 相当)
+  %   接点  P = (r^2/R, ± r sqrt(R^2-r^2)/R) = (2.200, ±2.098)
+  %   |EP| = sqrt(R^2 - r^2) = 2.898
+  %   sin eps = r/R = 0.7238  ->  eps = 46.38 度
+  \coordinate (S) at (0,0);
+  \coordinate (E) at (4.2,0);
+  \coordinate (Pw) at (2.200, 2.098);
+  \coordinate (Pe) at (2.200,-2.098);
+
+  \draw[venusC!45, thin] (S) circle (3.04);
+  \draw[earthC!35, dotted, thin] (S) circle (4.2);
+
+  % 接線（視線）
+  \draw[earthC, very thick] (E) -- (Pw);
+  \draw[earthC, very thick] (E) -- (Pe);
+  \draw[scaffoldC, thin] (E) -- (-0.9,0);
+
+  % 半径（接点で視線に直交する）
+  \draw[venusC, thick] (S) -- (Pw);
+  \draw[venusC, thick] (S) -- (Pe);
+
+  % 直角記号
+  \draw[angleC, thin] ($(Pw)+(226.38:0.30)$) -- ++(316.38:0.30) -- ++(46.38:0.30);
+  \draw[angleC, thin] ($(Pe)+(133.62:0.30)$) -- ++(43.62:0.30) -- ++(313.62:0.30);
+
+  % 離角の弧
+  \draw[angleC, thick] (E) ++(180:1.55) arc (180:133.62:1.55);
+  \node[angleC] at ($(E)+(157:1.88)$) {$\varepsilon_{\max}$};
+  \draw[angleC, thick] (E) ++(180:1.55) arc (180:226.38:1.55);
+  \node[angleC] at ($(E)+(203:1.88)$) {$\varepsilon_{\max}$};
+
+  \node[pt, sunC, inner sep=2.4pt] at (S) {};
+  \node[sunC, anchor=north east, font=\footnotesize] at ($(S)+(-0.10,-0.14)$) {太陽};
+  \node[pt, earthC, inner sep=2pt] at (E) {};
+  \node[earthC, anchor=west, font=\footnotesize] at ($(E)+(0.16,0)$) {地球};
+  \node[pt, venusC, inner sep=2pt] at (Pw) {};
+  \node[venusC, anchor=south, font=\footnotesize] at ($(Pw)+(0,0.16)$) {西方最大離角};
+  \node[pt, venusC, inner sep=2pt] at (Pe) {};
+  \node[venusC, anchor=north, font=\footnotesize] at ($(Pe)+(0,-0.16)$) {東方最大離角};
+
+\end{tikzpicture}
+\caption{最大離角の幾何（円軌道近似）。
+地球から惑星の軌道に引いた 2 本の接線が最大離角を与える。
+接点では半径と視線が直交するので位相角は $90^\circ$ ちょうどになり、
+惑星は半月形に見える。
+$\sin\varepsilon_{\max} = r/R$ より、$r/R=0.723$（金星）で $46.4^\circ$。
+北黄極側から見下ろした図で、黄経は反時計回りに増えるから、
+図の下側の接点が東方最大離角、上側が西方最大離角にあたる。}
+\label{fig:maxelong}
+\end{figure}
+
+\subsection{位相角と輝面比}
+
+\textbf{位相角}（phase angle）$i$ は、惑星から見た太陽の方向と地球の方向のなす角である。
+\begin{equation}
+  \cos i
+  = \frac{(-\vek{r}_p)\cdot(\vek{r}_\oplus - \vek{r}_p)}
+         {|\vek{r}_p|\,|\vek{r}_\oplus - \vek{r}_p|}
+  \label{eq:phaseangle}
+\end{equation}
+
+惑星は球であり、太陽に向いた半球が照らされている。
+地球から見える半球のうち、照らされた部分が占める面積の比を
+\textbf{輝面比} $k$ と呼ぶ。図 \ref{fig:terminator} の構成から
+\begin{equation}
+  k = \frac{1 + \cos i}{2}
+  \label{eq:illum}
+\end{equation}
+が得られる。$i=0^\circ$（外合の向き）で $k=1$（円形）、
+$i=90^\circ$ で $k=0.5$（半月形）、
+$i=180^\circ$（内合の向き）で $k=0$（暗黒）となる。
+
+\subsubsection*{輝面比の導出とターミネータ楕円}
+
+昼と夜の境界（\textbf{ターミネータ}）は、球面上では太陽方向に垂直な平面で
+切った大円である。これを視線方向に投影すると楕円になる。
+
+半径 $R_p$ の円盤として見える惑星について、
+明縁（太陽を向いた側の縁）と反対の向きに $x$ 軸を取る。
+ターミネータ大円は視線方向から見て $x$ 半軸 $R_p\cos i$、
+$y$ 半軸 $R_p$ の楕円に投影される。
+したがって輝いて見える領域は、
+
+\begin{itemize}
+  \item 明縁側の半円（面積 $\tfrac{1}{2}\pi R_p^2$）と、
+  \item $x$ 半軸 $R_p\cos i$、$y$ 半軸 $R_p$ の半楕円
+        （面積 $\tfrac{1}{2}\pi R_p^2\cos i$、符号つき）
+\end{itemize}
+
+を合わせたものになり、その面積は
+\begin{equation}
+  \frac{\pi R_p^2}{2}(1 + \cos i)
+\end{equation}
+である。円盤全体の面積 $\pi R_p^2$ で割れば式 \eqref{eq:illum} を得る。
+
+$\cos i < 0$ のとき、この「半楕円」は明縁と同じ側へ回り込む。
+すると図形は自動的に三日月形になる（図 \ref{fig:terminator} 右）。
+すなわち場合分けは不要で、$\cos i$ の符号がそのまま形を決める。
+本シミュレーターの概形描画はこの性質をそのまま使っており、
+描画コードに満ち欠けの分岐は現れない。
+
+% ---- 図 4: ターミネータ楕円 ---------------------------------------------
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[scale=1.0]
+
+  % 左パネル: i = 60 度、cos i = 0.5、k = 0.75（凸形）
+  \begin{scope}[shift={(0,0)}]
+    \fill[black!88] (0,0) circle (1.8);
+    % 輝面 = 右半円 + x半軸 -1.8*cos(60) = -0.9 の半楕円
+    \fill[venusC]
+      plot[domain=-90:90, samples=90, variable=\t] ({1.8*cos(\t)},{1.8*sin(\t)})
+      -- plot[domain=90:-90, samples=90, variable=\t] ({-0.9*cos(\t)},{1.8*sin(\t)})
+      -- cycle;
+    \draw[white!70, thin] (0,0) circle (1.8);
+    % ターミネータの楕円（全体を破線で）
+    \draw[white, densely dashed, thin]
+      plot[domain=0:360, samples=120, variable=\t] ({-0.9*cos(\t)},{1.8*sin(\t)});
+    % 半軸の表示
+    \draw[white, {Latex[length=1.6mm]}-{Latex[length=1.6mm]}, thin]
+      (0,-2.12) -- (-0.9,-2.12)
+      node[midway, below, font=\scriptsize, text=black]{$R_p\cos i$};
+    \draw[scaffoldC, thin] (0,-1.95) -- (0,-2.30);
+    \draw[scaffoldC, thin] (-0.9,-1.95) -- (-0.9,-2.30);
+    \node[font=\footnotesize] at (0,-2.78)
+      {$i=60^\circ$,\ \ $\cos i=+0.5$,\ \ $k=0.75$};
+    \node[font=\footnotesize] at (0,2.15) {凸形};
+  \end{scope}
+
+  % 右パネル: i = 120 度、cos i = -0.5、k = 0.25（三日月形）
+  \begin{scope}[shift={(5.4,0)}]
+    \fill[black!88] (0,0) circle (1.8);
+    \fill[venusC]
+      plot[domain=-90:90, samples=90, variable=\t] ({1.8*cos(\t)},{1.8*sin(\t)})
+      -- plot[domain=90:-90, samples=90, variable=\t] ({0.9*cos(\t)},{1.8*sin(\t)})
+      -- cycle;
+    \draw[white!70, thin] (0,0) circle (1.8);
+    \draw[white, densely dashed, thin]
+      plot[domain=0:360, samples=120, variable=\t] ({0.9*cos(\t)},{1.8*sin(\t)});
+    \draw[white, {Latex[length=1.6mm]}-{Latex[length=1.6mm]}, thin]
+      (0,-2.12) -- (0.9,-2.12)
+      node[midway, below, font=\scriptsize, text=black]{$R_p|\cos i|$};
+    \draw[scaffoldC, thin] (0,-1.95) -- (0,-2.30);
+    \draw[scaffoldC, thin] (0.9,-1.95) -- (0.9,-2.30);
+    \node[font=\footnotesize] at (0,-2.78)
+      {$i=120^\circ$,\ \ $\cos i=-0.5$,\ \ $k=0.25$};
+    \node[font=\footnotesize] at (0,2.15) {三日月形};
+  \end{scope}
+
+  % 太陽の方向
+  \draw[sunC, -{Latex[length=2.6mm]}, very thick] (2.15,0) -- (3.25,0);
+  \node[sunC, font=\footnotesize] at (2.70,0.34) {太陽の方向};
+
+\end{tikzpicture}
+\caption{ターミネータ楕円と輝面比。
+破線が昼夜の境界（ターミネータ）大円の投影で、
+$x$ 半軸は $R_p\cos i$、$y$ 半軸は $R_p$ である。
+橙色の領域が輝いて見える部分。
+$\cos i>0$ ではターミネータが明縁と反対側へ膨らんで凸形になり（左）、
+$\cos i<0$ では明縁と同じ側へ回り込んで三日月形になる（右）。
+どちらの場合も輝面の面積は $\pi R_p^2(1+\cos i)/2$ で、
+場合分けなしに扱える。}
+\label{fig:terminator}
+\end{figure}
+
+\subsubsection*{アプリでの描画の向き}
+
+サイドパネルの概形は、星図の慣例にならって
+\textbf{天の北を上、東を左}に取って描く。黄経は左向きに増える。
+明縁は常に太陽の方向を向くので、
+
+\begin{center}
+\begin{tabular}{ll}
+  \toprule
+  東方離角（$\Delta\lambda>0$、宵の明星） & 太陽は惑星より西 $=$ 画面右 $\Rightarrow$ 明縁は右\\
+  西方離角（$\Delta\lambda<0$、明けの明星） & 太陽は惑星より東 $=$ 画面左 $\Rightarrow$ 明縁は左\\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+となる。なお本シミュレーターは黄道面内での東西のみを扱っており、
+明縁の位置角（position angle）を赤道座標系で厳密に求めてはいない。
+天球上での実際の傾きを問題にする用途には使えない。
+
+\subsection{視直径}
+
+惑星の赤道半径を $R_p$、地心距離を $\Delta$ とすると、視直径は
+\begin{equation}
+  \theta = 2\arcsin\frac{R_p}{\Delta} \simeq \frac{2R_p}{\Delta}
+  \label{eq:diameter}
+\end{equation}
+で与えられる。$R_p/\Delta$ は最大でも $10^{-4}$ 程度なので、
+実装では右辺の近似式を用い、
+$1\ \mathrm{au} = \SI{149597870.7}{km}$ と
+$1\ \mathrm{rad} = 206264.806''$ を使って秒角に換算している。
+
+内惑星の視直径は会合周期のなかで大きく変わる。
+内合の頃に地球へ最も近づくので視直径は最大になるが、
+そのとき同時に $k$ はほぼ 0 になり細い三日月にしか見えない。
+逆に外合では円形に見えるが、太陽の向こう側なので最も小さい。
+この相反する変化を図 \ref{fig:synodic} に示す。
+
+% ---- 図 5: 会合周期にわたる変化 -----------------------------------------
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=13.2cm, height=6.4cm,
+  xlabel={内合からの経過日数 [日]},
+  ylabel={離角 [度]／視直径 [秒角]},
+  xmin=0, xmax=584,
+  ymin=-50, ymax=70,
+  axis y line*=left,
+  axis x line*=bottom,
+  grid=major, grid style={gray!22, very thin},
+  legend style={at={(0.5,1.15)}, anchor=north, legend columns=3,
+                draw=gray!40, font=\footnotesize},
+  tick label style={font=\footnotesize},
+  label style={font=\footnotesize},
+]
+  \addplot[earthC, very thick] table[x=days, y=signed] {data/venus-synodic.dat};
+  \addlegendentry{離角（$+$東方 $/$ $-$西方）}
+
+  \addplot[venusC, very thick] table[x=days, y=diam] {data/venus-synodic.dat};
+  \addlegendentry{視直径}
+
+  \addplot[black!45, densely dashed, thick]
+    table[x=days, y expr=\thisrow{k}*50] {data/venus-synodic.dat};
+  \addlegendentry{輝面比 $\times 50$}
+
+  \draw[gray!55, dashed] (axis cs:0,-50) -- (axis cs:0,70);
+  \draw[gray!55, dashed] (axis cs:584,-50) -- (axis cs:584,70);
+\end{axis}
+\end{tikzpicture}
+\caption{金星の 1 会合周期（約 584 日）にわたる離角・視直径・輝面比の変化。
+横軸の両端（$0$ 日と $584$ 日）が内合、中央付近の視直径が最小になるところが外合である。
+離角は符号つきで示してあり、正が東方（宵の明星）、負が西方（明けの明星）。
+内合の直後に符号が反転して宵の明星から明けの明星へ替わることが読み取れる。
+視直径が最大（約 $61''$）になる内合の前後で輝面比はほぼ 0 であり、
+最も近く最も大きく見えるときに最も細く見えるという内惑星の性質が現れている。
+外合（$290$ 日付近）で離角の曲線にわずかな段差が見えるのは、
+金星が太陽の真後ろではなく黄道面から少しずれて通過するため、
+離角が 0 にならないまま東西が入れ替わることによる。
+値はすべてアプリ本体と同一の実装（\texttt{Tools/export\_data}）から出力した。}
+\label{fig:synodic}
+\end{figure}
+
+% =========================================================================
+\section{現象時刻の数値探索}
+\label{sec:events}
+
+離角や地心黄経差は時刻 $t$ の滑らかな関数なので、
+現象の発生時刻は 1 変数の求根／極値問題に帰着する。
+
+\subsection{合}
+
+\textbf{合}（conjunction）は惑星と太陽の地心黄経が一致する瞬間、
+すなわち $\Delta\lambda(t) = 0$ を満たす時刻である。
+内惑星の $\Delta\lambda$ は $\pm\varepsilon_{\max}$ の間を往復するだけなので、
+$\pm180^\circ$ での折り返しは起こらず、単純な符号反転を探せばよい。
+
+求まった時刻で内合と外合を区別するには地心距離を見る。
+惑星が地球と太陽の間にあれば $|\vek{\Delta}| < |\vek{r}_\oplus|$ であり、
+これが\textbf{内合}である。そうでなければ\textbf{外合}である。
+
+実装は次の 2 段階で行う。
+
+\begin{enumerate}
+  \item \textbf{粗探索}: 6 時間刻みで $\Delta\lambda$ を評価し、符号が変わる区間を探す。
+        刻み幅を 6 時間まで詰めるのは、水星の会合周期が約 116 日と短く、
+        内合の前後では $\Delta\lambda$ が 1 日に十数度も動くためである。
+        1 日刻みでは符号反転を跨いで見落とす危険がある。
+  \item \textbf{二分法}: 見つけた区間を 60 回二分して秒未満まで追い込む。
+\end{enumerate}
+
+\subsection{最大離角}
+
+\textbf{最大離角}は $\varepsilon(t)$ の極大点である。
+粗探索で連続する 3 点 $t_0 < t_1 < t_2$ をとり、
+$\varepsilon(t_1) > \varepsilon(t_0)$ かつ $\varepsilon(t_1) \ge \varepsilon(t_2)$
+となったところで極大を挟んだと判定し、区間 $[t_0, t_2]$ に対して
+\textbf{三分探索}を行う。
+
+三分探索は区間を 3 等分する 2 点で関数値を比べ、
+小さい側の端を捨てる操作を繰り返す。1 回で区間幅が $2/3$ になるので、
+12 時間の区間を 1 秒まで詰めるには約 27 回で足りる。
+
+極大点の近傍では $\varepsilon$ が平坦になる（一次の項が消える）ため、
+関数値の変化を収束判定に使うと精度が出ない。
+実装では\textbf{区間幅}を収束条件にしている。
+
+\begin{quote}\small
+\textbf{最大離角の時刻が原理的に出しにくい理由.}
+極値の近くでは $\varepsilon(t) \simeq \varepsilon_{\max} - \tfrac{1}{2}|\varepsilon''|(t-t_{\max})^2$
+と振る舞う。したがって離角に $\delta\varepsilon$ の誤差があると、
+時刻の誤差は $\delta t \sim \sqrt{2\delta\varepsilon/|\varepsilon''|}$ と
+\textbf{平方根}で効いてしまい、大きく増幅される。
+本シミュレーターの離角の誤差は分角のオーダーなので、
+最大離角の時刻には数時間の不確かさが残る。
+これが、アプリの表示を分単位に留め「概算値」と明記している理由である。
+一方で合の時刻は $\Delta\lambda$ の\emph{零交差}であり、
+$\Delta\lambda$ が時間に対して一次で変化するため誤差の増幅は起こらず、
+相対的にずっと精度が高い。
+\end{quote}
+
+% =========================================================================
+\section{精度の検証と限界}
+\label{sec:accuracy}
+
+\subsection{自己整合性の検証}
+
+まず、物理法則から導かれる恒等式が成り立つことを確かめる。
+検証コード（\texttt{Tools/verify}）はアプリ本体と同じ実装を直接リンクしており、
+「検証用に書き写したコード」が本体とずれる余地がない。
+
+\begin{center}
+\begin{tabular}{lll}
+  \toprule
+  検証項目 & 判定の根拠 & 結果\\
+  \midrule
+  ケプラーの第三法則 & $T^2 = a^3$（太陽質量単位） & 全 9 天体で既知の周期と $0.1\%$ 以内\\
+  日心距離の値域 & $a(1-e) \le r \le a(1+e)$ & 全 9 天体で成立\\
+  面外成分 $z$ & 日心黄緯の最大値 $=$ 軌道傾斜角 $I$ & 全 9 天体で $0.02^\circ$ 以内\\
+  輝面比 & $k = (1+\cos i)/2$ かつ $0\le k\le 1$ & 水星・金星で成立\\
+  会合周期 & 内合の間隔（30 区間平均） & 水星 $115.62$ 日／金星 $583.91$ 日\\
+   & （既知 $115.88$ 日／$583.92$ 日） & \\
+  最大離角の値域 & 10 年分の最大離角の分布 & 水星 $17.89^\circ$--$27.81^\circ$\\
+   & （既知 水星 $17.9^\circ$--$27.8^\circ$、 & 金星 $45.40^\circ$--$47.19^\circ$\\
+   & 　金星 $45.4^\circ$--$47.1^\circ$） & \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{歳差の影響}
+
+第 2 節で述べたとおり、本シミュレーターの座標系は J2000.0 に固定されている。
+このことは検証のなかで定量的に確認できる。
+
+2025 年の春分の瞬間（2025-03-20 09:01 UTC）には、
+定義により地球から見た太陽が\emph{その時代の}真の春分点の方向にある。
+つまり日心系では地球が黄経 $180^\circ$ にあるはずである。
+ところが本シミュレーターが与える値は $179.6634^\circ$ で、$20.2'$ ずれる。
+
+これは誤差ではなく歳差である。IAU 2006 の一般歳差（黄経）
+$5028.796''/\text{世紀}$ を J2000.0 からの $T=0.2522$ 世紀に適用すると
+$1268.0'' = 21.1'$ となり、ずれの向きも大きさもほぼ一致する。
+残差は $56''$ で、これが本シミュレーターの位置の誤差そのものにあたる。
+
+\subsection{国立天文台の暦との比較}
+
+最終的な検証として、2026 年に水星・金星に起こる現象の予報を
+国立天文台が公表する日付と突き合わせた（表 \ref{tab:phenomena}）。
+\textbf{水星の 12 現象はすべて日付が一致した}。
+また金星の東方最大離角は日付・離角ともに一致している
+（本シミュレーター $45.89^\circ$、公表値 約 $45.9^\circ$）。
+
+\begin{table}[htbp]
+\centering
+\caption{本シミュレーターが予報する 2026 年の内惑星現象。
+時刻は日本標準時。離角の欄は最大離角のときのみ記す。
+水星の 12 現象は、国立天文台が公表する日付とすべて一致する。}
+\label{tab:phenomena}
+\small
+% 表の中身は Tools/export_data がアプリ本体と同じ実装から生成する
+\input{data/phenomena-2026.tex}
+\end{table}
+
+% ---- 図 6: 最大離角の分布 -----------------------------------------------
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=13.2cm, height=6.0cm,
+  xlabel={2026 年からの経過年},
+  ylabel={最大離角 [度]},
+  xmin=0, xmax=10,
+  ymin=15, ymax=50,
+  grid=major, grid style={gray!22, very thin},
+  legend style={at={(0.5,1.16)}, anchor=north, legend columns=2,
+                draw=gray!40, font=\footnotesize},
+  tick label style={font=\footnotesize},
+  label style={font=\footnotesize},
+]
+  \addplot[only marks, mark=*, mark size=1.5pt, venusC]
+    table[x=year, y=elong] {data/mercury-elongations.dat};
+  \addlegendentry{水星}
+
+  \addplot[only marks, mark=square*, mark size=1.7pt, earthC]
+    table[x=year, y=elong] {data/venus-elongations.dat};
+  \addlegendentry{金星}
+
+  % 既知の変動範囲
+  \draw[venusC!55, densely dashed] (axis cs:0,17.9) -- (axis cs:10,17.9);
+  \draw[venusC!55, densely dashed] (axis cs:0,27.8) -- (axis cs:10,27.8);
+  \draw[earthC!45, densely dashed] (axis cs:0,45.4) -- (axis cs:10,45.4);
+  \draw[earthC!45, densely dashed] (axis cs:0,47.1) -- (axis cs:10,47.1);
+\end{axis}
+\end{tikzpicture}
+\caption{2026 年から 10 年間に起こる最大離角の分布。
+破線は天文年鑑等で知られる変動範囲
+（水星 $17.9^\circ$--$27.8^\circ$、金星 $45.4^\circ$--$47.1^\circ$）。
+離心率が $0.206$ と大きい水星は、最大離角がどの位置で起こるかによって
+$10^\circ$ 近く変動する。
+一方、金星の軌道はほぼ円（$e=0.0068$）なので、
+最大離角は $46^\circ$ 前後にきれいに集中する。}
+\label{fig:elongdist}
+\end{figure}
+
+\subsection{補正していない効果}
+
+本シミュレーターは以下を\textbf{補正していない}。教育・可視化の用途を想定しており、
+実際の観測計画や測位に用いることは意図していない。
+
+\begin{description}
+  \item[軌道要素の近似] JPL の近似要素そのものが数分角の誤差をもつ。
+        惑星同士の重力相互作用は、木星以遠の補正項
+        （式 \eqref{eq:outer}）以外は考慮されていない。
+  \item[光路時間] 惑星の光が地球に届くまでの時間（金星の内合で約 2 分）を
+        考慮しておらず、位置は「その瞬間の真の位置」である。
+  \item[光行差] 地球の公転運動による見かけの位置のずれ（最大 $20.5''$）。
+  \item[歳差・章動] 座標系を J2000.0 に固定しており、
+        その時代の分点・黄道への変換を行っていない。
+  \item[大気差] 地平線近くで最大 $35'$ に達する大気による浮き上がり。
+  \item[観測地] 地心での値を示しており、地表の観測地による視差
+        （金星の内合で最大 $30''$ 程度）を考慮していない。
+  \item[地球と月] 地球には地球・月の重心 (EMB) の軌道要素を用いている。
+        地心とのずれは最大 $4700\ \mathrm{km}$ ほどである。
+\end{description}
+
+これらの結果として、位置の誤差は分角のオーダー、
+合の時刻は 1 時間以内、最大離角の時刻は数時間程度の不確かさをもつと見込まれる。
+アプリが現象時刻を分単位までしか表示せず「概算値」と注記しているのはこのためである。
+
+% =========================================================================
+\section{実装の構成}
+
+\subsection{macOS Sierra から最新版までを 1 つのコードベースで}
+
+本アプリは以前、SwiftUI 版と macOS Sierra 対応版の 2 系統に分かれていた。
+SwiftUI は macOS 10.15 以降でしか使えないため、
+Sierra (10.12) 対応と両立できなかったからである。
+
+現在は\textbf{AppKit による単一のコードベース}に統一している。
+AppKit は 10.12 から最新版まで一貫して利用でき、
+2 系統を保守する必要がなくなった。
+その代わり、以下の制約を守る必要がある。
+
+\begin{itemize}
+  \item \texttt{async}/\texttt{await}・\texttt{actor} は使えない
+        （Swift の並行性機能の後方展開の下限が 10.15 のため）。
+        時刻の進行は \texttt{Timer} と \texttt{NotificationCenter} で扱う。
+  \item Swift 6 の言語モードではなく \texttt{-swift-version 5} でビルドする。
+  \item 10.14 以降で追加された API
+        （\texttt{NSColor.controlAccentColor} など）を使わない。
+        使ってしまった場合はコンパイル時に availability エラーとして検出される。
+\end{itemize}
+
+\subsection{ビルド}
+
+\texttt{build.sh} が次の手順でユニバーサルバイナリを組み立てる。
+
+\begin{enumerate}
+  \item \texttt{x86\_64-apple-macosx10.12} と \texttt{arm64-apple-macosx11.0}
+        の 2 つのターゲットへ別々にコンパイルする。
+  \item \texttt{lipo} で 1 つのバイナリに結合する。
+  \item macOS 10.14.4 より前には OS 内に Swift ランタイムが存在しないため、
+        Xcode に付属する後方互換ライブラリを \texttt{Contents/Frameworks} へ同梱する。
+  \item rpath を \texttt{/usr/lib/swift} → \texttt{@executable\_path/../Frameworks}
+        の順で登録する。新しい OS では OS 側のランタイムが使われ、
+        古い OS でだけ同梱版へ落ちる。
+\end{enumerate}
+
+デプロイメントターゲットが正しく設定されているかは、
+\texttt{vtool -arch x86\_64 -show} で
+\texttt{LC\_VERSION\_MIN\_MACOSX version 10.12} を確認できる。
+
+\subsection{ソースの構成}
+
+\begin{center}
+\begin{tabular}{ll}
+  \toprule
+  ファイル & 役割\\
+  \midrule
+  \texttt{Sources/Models.swift} & 軌道要素と天体のデータ構造\\
+  \texttt{Sources/NASAElements.swift} & JPL の軌道要素の表\\
+  \texttt{Sources/OrbitalMechanics.swift} & 第 \ref{sec:position} 節の計算\\
+  \texttt{Sources/InnerPlanetPhenomena.swift} & 第 \ref{sec:appearance}・\ref{sec:events} 節の計算\\
+  \texttt{Sources/PhaseDiskView.swift} & 概形（満ち欠け）の描画\\
+  \texttt{Sources/InnerPlanetPanel.swift} & 内惑星サイドパネル\\
+  \texttt{Sources/SolarSystemCanvas.swift} & 俯瞰図の描画と視点操作\\
+  \texttt{Sources/AppUI.swift} & ウインドウとコントロール\\
+  \midrule
+  \texttt{Tools/verify} & 第 \ref{sec:accuracy} 節の検証\\
+  \texttt{Tools/export\_data} & 本書の図表のデータ生成\\
+  \texttt{Tools/panel\_preview} & サイドパネルのオフスクリーン描画\\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+% =========================================================================
+\section*{参考文献}
+\addcontentsline{toc}{section}{参考文献}
+
+\begin{itemize}
+  \item E.~M.~Standish, \emph{Keplerian Elements for Approximate Positions of the
+        Major Planets}, JPL Solar System Dynamics.\\
+        \url{https://ssd.jpl.nasa.gov/planets/approx_pos.html}
+  \item C.~D.~Murray and S.~F.~Dermott, \emph{Solar System Dynamics},
+        Cambridge University Press, 1999.
+  \item J.~Meeus, \emph{Astronomical Algorithms}, 2nd ed., Willmann-Bell, 1998.
+  \item 国立天文台 暦計算室「暦象年表」\\
+        \url{https://eco.mtk.nao.ac.jp/koyomi/}
+  \item NASA Planetary Fact Sheet.\\
+        \url{https://nssdc.gsfc.nasa.gov/planetary/factsheet/}
+\end{itemize}
+
+\end{document}

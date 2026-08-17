@@ -27,25 +27,41 @@ class PhaseDiskView: NSView {
         didSet { needsDisplay = true }
     }
 
-    /// 視直径をこのビュー内でどう縮尺するか。
-    /// 表示上の半径 = baseRadius × (視直径 / referenceArcsec) をクランプしたもの。
-    var referenceArcsec: Double = 60.0
+    /// 円盤の大きさを決める基準の視直径 [秒角]。
+    ///
+    /// 水星と金星で同じ値を使うことで、両者の視直径を直接見比べられるようにする。
+    /// 金星の最大視直径 (約 66″) を円盤の最大サイズに対応させる。
+    var referenceArcsec: Double = 66.0
+
+    /// 円盤が小さくなりすぎて満ち欠けが読めなくなる下限の半径 [pt]。
+    /// これを下回るときは拡大して描き、倍率を図中に明記する。
+    private let minimumLegibleRadius: CGFloat = 13.0
 
     override var isFlipped: Bool { return true }
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor(calibratedWhite: 0.06, alpha: 1.0).setFill()
-        NSBezierPath(rect: bounds).fill()
+        let bg = NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6)
+        bg.fill()
 
         guard let s = status else { return }
 
-        let center = NSPoint(x: bounds.midX, y: bounds.midY)
-        let maxRadius = min(bounds.width, bounds.height) / 2.0 - 10.0
+        let center = NSPoint(x: bounds.midX, y: bounds.midY - 4)
+        let maxRadius = min(bounds.width, bounds.height) / 2.0 - 14.0
 
-        // 視直径に比例させるが、小さすぎ / 大きすぎを避けるためクランプする。
-        // (水星の視直径は 4.5″〜13″、金星は 9.7″〜66″ と大きく変わる)
-        let scaled = maxRadius * (s.apparentDiameterArcsec / referenceArcsec)
-        let R = max(6.0, min(maxRadius, scaled))
+        // 水星と金星で共通の縮尺。水星 (4.5″〜13″) は金星 (9.7″〜66″) に比べて
+        // ずっと小さく、そのまま描くと満ち欠けが判別できない。
+        // その場合だけ拡大し、倍率を図中に書いて誤解を防ぐ。
+        let trueRadius = maxRadius * CGFloat(s.apparentDiameterArcsec / referenceArcsec)
+        let R: CGFloat
+        let magnification: CGFloat
+        if trueRadius < minimumLegibleRadius {
+            R = minimumLegibleRadius
+            magnification = minimumLegibleRadius / max(trueRadius, 0.001)
+        } else {
+            R = min(maxRadius, trueRadius)
+            magnification = 1.0
+        }
 
         // 影の側を含む円盤全体 (地色をごく暗く)
         planetColor.withAlphaComponent(0.16).setFill()
@@ -66,7 +82,7 @@ class PhaseDiskView: NSView {
         outline.lineWidth = 1.0
         outline.stroke()
 
-        drawScaleHint(center: center, radius: R)
+        drawScaleHint(magnification: magnification)
     }
 
     /// 輝面のパスを作る
@@ -100,14 +116,27 @@ class PhaseDiskView: NSView {
         return path
     }
 
-    /// 「東 ←」「→ 西」の向きを小さく添える
-    private func drawScaleHint(center: NSPoint, radius R: CGFloat) {
+    /// 方位 (東が左・西が右) と、拡大している場合はその倍率を小さく添える
+    private func drawScaleHint(magnification: CGFloat) {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 9.0),
             .foregroundColor: NSColor(calibratedWhite: 0.45, alpha: 1.0)
         ]
-        ("東" as NSString).draw(at: NSPoint(x: 4, y: bounds.height / 2 - 6), withAttributes: attrs)
-        ("西" as NSString).draw(at: NSPoint(x: bounds.width - 16, y: bounds.height / 2 - 6),
+        ("東" as NSString).draw(at: NSPoint(x: 4, y: bounds.height / 2 - 10), withAttributes: attrs)
+        ("西" as NSString).draw(at: NSPoint(x: bounds.width - 16, y: bounds.height / 2 - 10),
                                withAttributes: attrs)
+
+        // 縮尺は水星・金星で共通。小さすぎて拡大したときだけ倍率を明記する。
+        let note = magnification > 1.05
+            ? String(format: "×%.0f 拡大", magnification)
+            : "実スケール"
+        let noteAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 9.0),
+            .foregroundColor: NSColor(calibratedWhite: 0.52, alpha: 1.0)
+        ]
+        let size = (note as NSString).size(withAttributes: noteAttrs)
+        (note as NSString).draw(at: NSPoint(x: (bounds.width - size.width) / 2,
+                                            y: bounds.height - size.height - 3),
+                                withAttributes: noteAttrs)
     }
 }

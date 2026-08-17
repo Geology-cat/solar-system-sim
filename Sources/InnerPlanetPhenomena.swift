@@ -33,7 +33,7 @@ struct InnerPlanetStatus {
         if illuminatedFraction < 0.04 { return "ほぼ暗黒" }
         if illuminatedFraction < 0.35 { return "細い三日月形" }
         if illuminatedFraction < 0.46 { return "三日月形" }
-        if illuminatedFraction < 0.54 { return "半月形 (二分)" }
+        if illuminatedFraction < 0.54 { return "半月形・二分" }
         if illuminatedFraction < 0.90 { return "凸形" }
         if illuminatedFraction < 0.98 { return "ほぼ円形" }
         return "円形"

@@ -59,6 +59,20 @@ if [ "${1:-}" = "verify" ]; then
     exec "${BUILD_DIR}/verify-tool"
 fi
 
+# --- サイドパネルのオフスクリーンプレビュー ---
+if [ "${1:-}" = "preview" ]; then
+    mkdir -p "${BUILD_DIR}"
+    PREVIEW_SOURCES=()
+    for f in "${SOURCES[@]}"; do
+        [ "$(basename "$f")" = "main.swift" ] && continue
+        PREVIEW_SOURCES+=("$f")
+    done
+    swiftc -swift-version 5 -O \
+        -o "${BUILD_DIR}/panel-preview" \
+        "${PREVIEW_SOURCES[@]}" Tools/panel_preview/main.swift
+    exec "${BUILD_DIR}/panel-preview" "${2:-}" "${3:-${BUILD_DIR}/panel-preview.png}"
+fi
+
 echo "==> ソース: ${#SOURCES[@]} ファイル"
 mkdir -p "${BUILD_DIR}"
 

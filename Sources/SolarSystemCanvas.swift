@@ -122,11 +122,12 @@ class SolarSystemCanvas: NSView {
 
     // MARK: - 視点操作
 
+    /// マウスホイールでは視点を動かさない。
+    ///
+    /// ホイールの空回しで意図せず視点がずれるのを避けるため、意図的に何もしない。
+    /// 視点の移動はドラッグ、拡大縮小はスライダーかピンチ操作で行う。
     override func scrollWheel(with event: NSEvent) {
-        state.pan.width += event.scrollingDeltaX
-        state.pan.height += event.scrollingDeltaY
-        needsDisplay = true
-        requestControlUpdate()
+        // 何もしない
     }
 
     override func mouseDown(with event: NSEvent) {

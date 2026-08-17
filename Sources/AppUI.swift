@@ -20,7 +20,7 @@ class ControlPanelView: NSView {
 
 /// ウインドウ全体のレイアウトとコントロールの取りまとめ
 class MainContainerView: NSView {
-    private let controlHeight: CGFloat = 110.0
+    private let controlHeight: CGFloat = 122.0
 
     let appState = AppState()
     let canvas = SolarSystemCanvas()
@@ -39,14 +39,23 @@ class MainContainerView: NSView {
     let lblSpeed = NSTextField(labelWithString: "1 日/秒")
     let btnSidePanel = NSButton(title: "内惑星パネル", target: nil, action: nil)
 
-    let lblScale = NSTextField(labelWithString: "表示スケール:")
     let btnZoomOut = NSButton(title: "−", target: nil, action: nil)
     let sliderZoom = NSSlider(value: 0.1, minValue: 0.02, maxValue: 30.0, target: nil, action: nil)
     let btnZoomIn = NSButton(title: "+", target: nil, action: nil)
     let btnReset = NSButton(title: "視点リセット", target: nil, action: nil)
 
-    let lockLabel = NSTextField(labelWithString: "")
+    let lockLabel = NSTextField(labelWithString: "（天体をダブルクリックで固定）")
     let btnUnlock = NSButton(title: "固定解除", target: nil, action: nil)
+
+    // 各コントロールが何であるかを示す見出し
+    let capDate = NSTextField(labelWithString: "シミュレーション日時")
+    let capJump = NSTextField(labelWithString: "日時を動かす")
+    let capPlay = NSTextField(labelWithString: "再生／停止")
+    let capSpeed = NSTextField(labelWithString: "再生の速さ")
+    let capPanel = NSTextField(labelWithString: "サイドパネル")
+    let capScale = NSTextField(labelWithString: "表示スケール（拡大・縮小）")
+    let capView = NSTextField(labelWithString: "視点")
+    let capLock = NSTextField(labelWithString: "注目天体の固定")
 
     var timer: Timer?
 
@@ -69,6 +78,7 @@ class MainContainerView: NSView {
 
         addSubview(controlPanel)
 
+        setupCaptions()
         setupDateControls()
         setupPlaybackControls()
         setupViewControls()
@@ -159,10 +169,24 @@ class MainContainerView: NSView {
         controlPanel.addSubview(btnSidePanel)
     }
 
-    private func setupViewControls() {
-        configureLabel(lblScale)
-        controlPanel.addSubview(lblScale)
+    /// コントロールの上に添える小さな見出し
+    private func configureCaption(_ label: NSTextField) {
+        label.isBezeled = false
+        label.drawsBackground = false
+        label.isEditable = false
+        label.font = NSFont.systemFont(ofSize: 10)
+        label.textColor = NSColor(calibratedWhite: 0.38, alpha: 1.0)
+        controlPanel.addSubview(label)
+    }
 
+    private func setupCaptions() {
+        for caption in [capDate, capJump, capPlay, capSpeed, capPanel,
+                        capScale, capView, capLock] {
+            configureCaption(caption)
+        }
+    }
+
+    private func setupViewControls() {
         btnZoomOut.target = self
         btnZoomOut.action = #selector(zoomOut)
         btnZoomIn.target = self
@@ -187,8 +211,8 @@ class MainContainerView: NSView {
         controlPanel.addSubview(btnUnlock)
 
         configureLabel(lockLabel)
-        lockLabel.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
-        lockLabel.textColor = NSColor(calibratedRed: 0.70, green: 0.08, blue: 0.07, alpha: 1.0)
+        lockLabel.font = NSFont.systemFont(ofSize: 11)
+        lockLabel.textColor = NSColor(calibratedWhite: 0.45, alpha: 1.0)
         controlPanel.addSubview(lockLabel)
     }
 
@@ -203,7 +227,7 @@ class MainContainerView: NSView {
         let canvasHeight = max(0, bounds.height - controlHeight)
         let panelWidth = appState.showsInnerPlanetPanel ? InnerPlanetPanel.preferredWidth : 0
         // キャンバスが潰れないよう、狭いウインドウではパネル幅を譲る
-        let effectivePanelWidth = min(panelWidth, max(0, bounds.width - 420))
+        let effectivePanelWidth = min(panelWidth, max(0, bounds.width - 440))
 
         canvas.frame = NSRect(x: 0, y: 0,
                               width: bounds.width - effectivePanelWidth, height: canvasHeight)
@@ -217,25 +241,49 @@ class MainContainerView: NSView {
 
         controlPanel.frame = NSRect(x: 0, y: canvasHeight, width: bounds.width, height: controlHeight)
 
-        datePicker.frame = NSRect(x: 20, y: 16, width: 230, height: 26)
-        btnNow.frame = NSRect(x: 260, y: 14, width: 62, height: 30)
-        btnMinusYear.frame = NSRect(x: 328, y: 14, width: 62, height: 30)
-        btnPlusYear.frame = NSRect(x: 396, y: 14, width: 62, height: 30)
-        btnToggle.frame = NSRect(x: 472, y: 14, width: 46, height: 30)
-        sliderSpeed.frame = NSRect(x: 532, y: 17, width: 150, height: 25)
-        lblSpeed.frame = NSRect(x: 690, y: 20, width: 90, height: 20)
-        btnSidePanel.frame = NSRect(x: max(792, bounds.width - 150), y: 14, width: 130, height: 30)
+        // --- 1 段目: 日時と再生 ---
+        let capY1: CGFloat = 7
+        let rowY1: CGFloat = 23
 
-        lblScale.frame = NSRect(x: 20, y: 66, width: 95, height: 20)
-        btnZoomOut.frame = NSRect(x: 120, y: 61, width: 40, height: 30)
-        sliderZoom.frame = NSRect(x: 170, y: 65, width: min(270, max(170, bounds.width - 570)), height: 25)
-        btnZoomIn.frame = NSRect(x: sliderZoom.frame.maxX + 8, y: 61, width: 40, height: 30)
-        btnReset.frame = NSRect(x: btnZoomIn.frame.maxX + 12, y: 61, width: 110, height: 30)
+        capDate.frame = NSRect(x: 20, y: capY1, width: 220, height: 14)
+        datePicker.frame = NSRect(x: 20, y: rowY1, width: 220, height: 26)
 
-        let unlockX = max(btnReset.frame.maxX + 14, bounds.width - 112)
-        lockLabel.frame = NSRect(x: btnReset.frame.maxX + 14, y: 67,
-                                 width: max(120, unlockX - btnReset.frame.maxX - 22), height: 20)
-        btnUnlock.frame = NSRect(x: unlockX, y: 61, width: 90, height: 30)
+        capJump.frame = NSRect(x: 250, y: capY1, width: 180, height: 14)
+        btnNow.frame = NSRect(x: 250, y: rowY1 - 2, width: 56, height: 30)
+        btnMinusYear.frame = NSRect(x: 312, y: rowY1 - 2, width: 56, height: 30)
+        btnPlusYear.frame = NSRect(x: 374, y: rowY1 - 2, width: 56, height: 30)
+
+        capPlay.frame = NSRect(x: 444, y: capY1, width: 70, height: 14)
+        btnToggle.frame = NSRect(x: 444, y: rowY1 - 2, width: 46, height: 30)
+
+        capSpeed.frame = NSRect(x: 504, y: capY1, width: 220, height: 14)
+        sliderSpeed.frame = NSRect(x: 504, y: rowY1 + 1, width: 140, height: 25)
+        lblSpeed.frame = NSRect(x: 650, y: rowY1 + 4, width: 76, height: 20)
+
+        let panelBtnX = max(748, bounds.width - 158)
+        capPanel.frame = NSRect(x: panelBtnX, y: capY1, width: 140, height: 14)
+        btnSidePanel.frame = NSRect(x: panelBtnX, y: rowY1 - 2, width: 140, height: 30)
+
+        // --- 2 段目: 表示スケールと視点 ---
+        let capY2: CGFloat = 66
+        let rowY2: CGFloat = 82
+
+        capScale.frame = NSRect(x: 20, y: capY2, width: 260, height: 14)
+        btnZoomOut.frame = NSRect(x: 20, y: rowY2, width: 40, height: 28)
+        let zoomWidth = min(260, max(150, bounds.width - 620))
+        sliderZoom.frame = NSRect(x: 68, y: rowY2 + 2, width: zoomWidth, height: 25)
+        btnZoomIn.frame = NSRect(x: sliderZoom.frame.maxX + 8, y: rowY2, width: 40, height: 28)
+
+        let viewX = btnZoomIn.frame.maxX + 20
+        capView.frame = NSRect(x: viewX, y: capY2, width: 120, height: 14)
+        btnReset.frame = NSRect(x: viewX, y: rowY2, width: 110, height: 28)
+
+        let lockX = btnReset.frame.maxX + 22
+        let unlockX = max(lockX + 190, bounds.width - 100)
+        capLock.frame = NSRect(x: lockX, y: capY2, width: 160, height: 14)
+        lockLabel.frame = NSRect(x: lockX, y: rowY2 + 5,
+                                 width: max(140, unlockX - lockX - 10), height: 18)
+        btnUnlock.frame = NSRect(x: unlockX, y: rowY2, width: 88, height: 28)
     }
 
     // MARK: - アクション
@@ -335,9 +383,13 @@ class MainContainerView: NSView {
 
         if let fixedName = appState.fixedBodyName {
             lockLabel.stringValue = "\(fixedName) を真下に固定中"
+            lockLabel.textColor = NSColor(calibratedRed: 0.70, green: 0.08, blue: 0.07, alpha: 1.0)
+            lockLabel.font = NSFont.boldSystemFont(ofSize: 12)
             btnUnlock.isHidden = false
         } else {
-            lockLabel.stringValue = ""
+            lockLabel.stringValue = "（天体をダブルクリックで固定）"
+            lockLabel.textColor = NSColor(calibratedWhite: 0.45, alpha: 1.0)
+            lockLabel.font = NSFont.systemFont(ofSize: 11)
             btnUnlock.isHidden = true
         }
     }
@@ -359,13 +411,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = menu
 
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 720),
+            contentRect: NSRect(x: 0, y: 0, width: 1320, height: 840),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "太陽系シミュレーター"
-        window.minSize = NSSize(width: 960, height: 560)
+        window.minSize = NSSize(width: 1020, height: 600)
         window.center()
 
         let container = MainContainerView(frame: window.contentRect(forFrameRect: window.frame))

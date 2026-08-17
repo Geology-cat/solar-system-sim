@@ -8,7 +8,7 @@
 import Cocoa
 
 let app = NSApplication.shared
-app.setActivationPolicy(.prohibited)
+app.setActivationPolicy(.accessory)
 
 let args = CommandLine.arguments
 
@@ -24,28 +24,54 @@ func parseDate(_ s: String) -> Date? {
     return nil
 }
 
-let targetDate: Date = args.count > 1 ? (parseDate(args[1]) ?? Date()) : Date()
-let outputPath = args.count > 2 ? args[2] : "build/panel-preview.png"
+// 第 1 引数が "window" のときはウインドウ全体 (俯瞰図 + 操作パネル + サイドパネル)、
+// それ以外は日時とみなしてサイドパネル単体を描く。
+let wantsWholeWindow = args.count > 1 && args[1] == "window"
 
-let panel = InnerPlanetPanel()
-panel.frame = NSRect(x: 0, y: 0,
-                     width: InnerPlanetPanel.preferredWidth,
-                     height: panel.preferredHeight)
-panel.layoutContents()
-panel.update(date: targetDate, force: true)
+let dateArgIndex = wantsWholeWindow ? 2 : 1
+let outputArgIndex = wantsWholeWindow ? 3 : 2
 
-// 一度レイアウト後にサブビューまで確実に再描画させる
-panel.setNeedsDisplay(panel.bounds)
-for sub in panel.subviews {
-    sub.setNeedsDisplay(sub.bounds)
-    for s2 in sub.subviews { s2.setNeedsDisplay(s2.bounds) }
+let targetDate: Date = args.count > dateArgIndex
+    ? (parseDate(args[dateArgIndex]) ?? Date()) : Date()
+let outputPath = args.count > outputArgIndex
+    ? args[outputArgIndex]
+    : (wantsWholeWindow ? "build/window-preview.png" : "build/panel-preview.png")
+
+/// サブビューまで確実に再描画させる
+func markDirty(_ view: NSView) {
+    view.setNeedsDisplay(view.bounds)
+    for sub in view.subviews { markDirty(sub) }
 }
 
-guard let rep = panel.bitmapImageRepForCachingDisplay(in: panel.bounds) else {
+let target: NSView
+
+if wantsWholeWindow {
+    let container = MainContainerView(
+        frame: NSRect(x: 0, y: 0, width: 1320, height: 840))
+    container.appState.date = targetDate
+    container.datePicker.dateValue = targetDate
+    container.dateChanged()
+    // 内惑星がはっきり見える倍率にしておく
+    container.appState.zoom = 2.2
+    container.sliderZoom.doubleValue = 2.2
+    target = container
+} else {
+    let panel = InnerPlanetPanel()
+    panel.frame = NSRect(x: 0, y: 0,
+                         width: InnerPlanetPanel.preferredWidth,
+                         height: panel.preferredHeight)
+    panel.layoutContents()
+    panel.update(date: targetDate, force: true)
+    target = panel
+}
+
+markDirty(target)
+
+guard let rep = target.bitmapImageRepForCachingDisplay(in: target.bounds) else {
     FileHandle.standardError.write("描画用ビットマップを作れませんでした\n".data(using: .utf8)!)
     exit(1)
 }
-panel.cacheDisplay(in: panel.bounds, to: rep)
+target.cacheDisplay(in: target.bounds, to: rep)
 
 guard let png = rep.representation(using: .png, properties: [:]) else {
     FileHandle.standardError.write("PNG への変換に失敗しました\n".data(using: .utf8)!)

@@ -16,6 +16,7 @@
 #   ./build.sh          … ビルドして dist/SolarSystemSim.app を作る
 #   ./build.sh run      … ビルドして起動する
 #   ./build.sh verify   … 軌道計算の検証ツールを実行する
+#   ./build.sh dmg      … 配布用 DMG を作る
 #   ./build.sh clean    … 生成物を消す
 
 set -euo pipefail
@@ -70,7 +71,7 @@ if [ "${1:-}" = "preview" ]; then
     swiftc -swift-version 5 -O \
         -o "${BUILD_DIR}/panel-preview" \
         "${PREVIEW_SOURCES[@]}" Tools/panel_preview/main.swift
-    exec "${BUILD_DIR}/panel-preview" "${2:-}" "${3:-${BUILD_DIR}/panel-preview.png}"
+    exec "${BUILD_DIR}/panel-preview" "${2:-}" "${3:-}" "${4:-}"
 fi
 
 # --- 技術解説の図表に使うデータの書き出し ---
@@ -172,4 +173,57 @@ if [ "${1:-}" = "run" ]; then
     echo ""
     echo "==> 起動"
     open "${APP_BUNDLE}"
+fi
+
+# --- 配布用 DMG の作成 ---
+#
+# 同梱物:
+#   SolarSystemSim.app   アプリ本体
+#   技術解説.pdf          理論と実装の解説
+#   Gatekeeper解除.scpt   隔離属性を外すスクリプト
+#   Applications          /Applications へのシンボリックリンク (インストール用)
+if [ "${1:-}" = "dmg" ]; then
+    DMG_ROOT="${BUILD_DIR}/dmg-root"
+    VOLUME_NAME="太陽系シミュレーター"
+    DMG_PATH="${DIST_DIR}/SolarSystemSim.dmg"
+    PDF_PATH="docs/tex/技術解説.pdf"
+
+    echo ""
+    echo "==> 配布用 DMG を作成"
+
+    if [ ! -f "${PDF_PATH}" ]; then
+        echo "!! ${PDF_PATH} がありません。先に技術解説をコンパイルしてください:"
+        echo "   ./build.sh data && (cd docs/tex && latexmk -lualatex 技術解説.tex)"
+        exit 1
+    fi
+
+    rm -rf "${DMG_ROOT}"
+    mkdir -p "${DMG_ROOT}"
+
+    cp -R "${APP_BUNDLE}" "${DMG_ROOT}/"
+    cp "${PDF_PATH}" "${DMG_ROOT}/技術解説.pdf"
+
+    echo "==> Gatekeeper 解除スクリプトをコンパイル"
+    osacompile -o "${DMG_ROOT}/Gatekeeper解除.scpt" "Tools/dist/Gatekeeper解除.applescript"
+
+    ln -s /Applications "${DMG_ROOT}/Applications"
+
+    # ディスクイメージには隔離属性を持ち込まない
+    xattr -cr "${DMG_ROOT}" 2>/dev/null || true
+
+    rm -f "${DMG_PATH}"
+    hdiutil create \
+        -volname "${VOLUME_NAME}" \
+        -srcfolder "${DMG_ROOT}" \
+        -fs HFS+ \
+        -format UDZO \
+        -imagekey zlib-level=9 \
+        -quiet \
+        "${DMG_PATH}"
+
+    echo ""
+    echo "完成: ${DMG_PATH}"
+    ls -lh "${DMG_PATH}" | awk '{print "  サイズ: " $5}'
+    echo "  同梱物:"
+    ls -1 "${DMG_ROOT}" | sed 's/^/    /'
 fi

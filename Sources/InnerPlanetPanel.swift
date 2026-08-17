@@ -1,16 +1,26 @@
 import Cocoa
 
 /// 内惑星 1 つ分の表示ブロック
+///
+/// 縦に「概形 → 数値 → 今後の現象」の順で積む。
 private class InnerPlanetSection: NSView {
     let planet: CelestialBody
 
     let headerLabel = NSTextField(labelWithString: "")
     let diskView = PhaseDiskView()
     let statusLabel = NSTextField(labelWithString: "")
+    let eventsHeaderLabel = NSTextField(labelWithString: "今後の現象（日本標準時・概算値）")
     let eventsLabel = NSTextField(labelWithString: "")
 
+    // 各パーツの高さ
+    private let headerHeight: CGFloat = 26
+    private let diskHeight: CGFloat = 190
+    private let statusHeight: CGFloat = 126
+    private let eventsHeaderHeight: CGFloat = 24
+    private let eventsHeight: CGFloat = 92
+
     /// このブロックを描くのに必要な高さ
-    static let preferredHeight: CGFloat = 236
+    static let preferredHeight: CGFloat = 26 + 190 + 126 + 24 + 92 + 26
 
     override var isFlipped: Bool { return true }
 
@@ -19,18 +29,24 @@ private class InnerPlanetSection: NSView {
         super.init(frame: .zero)
 
         headerLabel.stringValue = planet.name
-        headerLabel.font = NSFont.boldSystemFont(ofSize: 15)
-        headerLabel.textColor = NSColor(calibratedWhite: 0.10, alpha: 1.0)
+        headerLabel.font = NSFont.boldSystemFont(ofSize: 17)
+        headerLabel.textColor = NSColor(calibratedWhite: 0.08, alpha: 1.0)
         addSubview(headerLabel)
 
         diskView.planetColor = planet.color
-        // 縮尺は水星・金星で共通にして、両者の視直径を直接見比べられるようにする
+        // 円盤が描画領域いっぱいになる視直径。その惑星の最大視直径より少し大きく取る。
+        // (水星は最大 13″、金星は最大 66″)
+        diskView.fullScaleArcsec = (planet.name == "金星") ? 68.0 : 14.0
         addSubview(diskView)
 
-        configureBlockLabel(statusLabel)
+        configureBlockLabel(statusLabel, size: 13)
         addSubview(statusLabel)
 
-        configureBlockLabel(eventsLabel)
+        eventsHeaderLabel.font = NSFont.boldSystemFont(ofSize: 12)
+        eventsHeaderLabel.textColor = NSColor(calibratedWhite: 0.30, alpha: 1.0)
+        addSubview(eventsHeaderLabel)
+
+        configureBlockLabel(eventsLabel, size: 13)
         addSubview(eventsLabel)
     }
 
@@ -38,9 +54,9 @@ private class InnerPlanetSection: NSView {
         fatalError("init(coder:) は未対応です")
     }
 
-    private func configureBlockLabel(_ label: NSTextField) {
-        label.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        label.textColor = NSColor(calibratedWhite: 0.18, alpha: 1.0)
+    private func configureBlockLabel(_ label: NSTextField, size: CGFloat) {
+        label.font = NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular)
+        label.textColor = NSColor(calibratedWhite: 0.14, alpha: 1.0)
         label.usesSingleLineMode = false
         label.lineBreakMode = .byWordWrapping
         label.cell?.wraps = true
@@ -55,18 +71,31 @@ private class InnerPlanetSection: NSView {
 
     func layoutContents() {
         let w = bounds.width
-        headerLabel.frame = NSRect(x: 12, y: 4, width: w - 24, height: 20)
-        diskView.frame = NSRect(x: 12, y: 26, width: 108, height: 112)
-        statusLabel.frame = NSRect(x: 128, y: 26, width: max(80, w - 140), height: 112)
-        eventsLabel.frame = NSRect(x: 12, y: 144, width: w - 24, height: 86)
+        let inset: CGFloat = 14
+        var y: CGFloat = 6
+
+        headerLabel.frame = NSRect(x: inset, y: y, width: w - inset * 2, height: headerHeight)
+        y += headerHeight
+
+        diskView.frame = NSRect(x: inset, y: y, width: w - inset * 2, height: diskHeight)
+        y += diskHeight + 10
+
+        statusLabel.frame = NSRect(x: inset, y: y, width: w - inset * 2, height: statusHeight)
+        y += statusHeight
+
+        eventsHeaderLabel.frame = NSRect(x: inset, y: y, width: w - inset * 2,
+                                         height: eventsHeaderHeight)
+        y += eventsHeaderHeight
+
+        eventsLabel.frame = NSRect(x: inset, y: y, width: w - inset * 2, height: eventsHeight)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         // ブロック下端の区切り線
-        NSColor(calibratedWhite: 0.80, alpha: 1.0).setStroke()
+        NSColor(calibratedWhite: 0.78, alpha: 1.0).setStroke()
         let line = NSBezierPath()
-        line.move(to: NSPoint(x: 12, y: bounds.height - 0.5))
-        line.line(to: NSPoint(x: bounds.width - 12, y: bounds.height - 0.5))
+        line.move(to: NSPoint(x: 14, y: bounds.height - 0.5))
+        line.line(to: NSPoint(x: bounds.width - 14, y: bounds.height - 0.5))
         line.lineWidth = 1.0
         line.stroke()
     }
@@ -75,29 +104,30 @@ private class InnerPlanetSection: NSView {
     func apply(status: InnerPlanetStatus) {
         diskView.status = status
         statusLabel.stringValue = [
-            String(format: "離　　角   %.2f° (%@)", status.elongationDeg, status.directionLabel),
-            String(format: "視 直 径   %.1f″", status.apparentDiameterArcsec),
-            String(format: "輝 面 比   %.3f (%@)", status.illuminatedFraction, status.phaseName),
-            String(format: "位 相 角   %.1f°", status.phaseAngleDeg),
-            String(format: "地心距離   %.4f AU", status.geocentricDistanceAU),
-            String(format: "日心距離   %.4f AU", status.heliocentricDistanceAU)
+            String(format: "離　　角　  %.2f°（%@）", status.elongationDeg, status.directionLabel),
+            String(format: "視 直 径　  %.1f″", status.apparentDiameterArcsec),
+            String(format: "輝 面 比　  %.3f　%@", status.illuminatedFraction, status.phaseName),
+            String(format: "位 相 角　  %.1f°", status.phaseAngleDeg),
+            String(format: "地心距離　  %.4f au", status.geocentricDistanceAU),
+            String(format: "日心距離　  %.4f au", status.heliocentricDistanceAU)
         ].joined(separator: "\n")
     }
 
     /// 今後の現象を反映する
     func apply(events: [InnerPlanetEvent], formatter: DateFormatter) {
-        var lines = ["今後の現象（日本時間・概算値）"]
         if events.isEmpty {
-            lines.append("　（探索範囲内に該当なし）")
+            eventsLabel.stringValue = "　（探索範囲内に該当なし）"
+            return
         }
+        var lines: [String] = []
         for e in events {
             let stamp = formatter.string(from: e.date)
             switch e.kind {
             case .greatestEasternElongation, .greatestWesternElongation:
-                lines.append(String(format: "　%@  %@  %.1f°",
+                lines.append(String(format: "%@ %@  %.1f°",
                                     padded(e.kind.label, to: 6), stamp, e.elongationDeg))
             case .inferiorConjunction, .superiorConjunction:
-                lines.append(String(format: "　%@  %@",
+                lines.append(String(format: "%@ %@",
                                     padded(e.kind.label, to: 6), stamp))
             }
         }
@@ -113,12 +143,12 @@ private class InnerPlanetSection: NSView {
 
 /// 内惑星 (水星・金星) の見え方を示すサイドパネル
 ///
-/// 概形 (満ち欠け) と視直径、離角、および東方/西方最大離角・内合・外合の
-/// 予報時刻を日本時間で表示する。
+/// 「水星の概形 → 数値 → 今後の現象 → 金星の概形 → 数値 → 今後の現象」
+/// の順に縦へ積む。全体はスクロールビューに収める。
 class InnerPlanetPanel: NSView {
 
     /// パネルの標準幅
-    static let preferredWidth: CGFloat = 340
+    static let preferredWidth: CGFloat = 380
 
     private var sections: [InnerPlanetSection] = []
     private let noticeLabel = NSTextField(labelWithString: "")
@@ -131,6 +161,8 @@ class InnerPlanetPanel: NSView {
     /// 現象探索は 3000 点規模の位置計算を伴うので、
     /// 再生中に毎フレーム走らせないよう実時間で間引く
     private let eventRecomputeInterval: TimeInterval = 0.25
+
+    private let noticeHeight: CGFloat = 108
 
     private let jstFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -153,15 +185,15 @@ class InnerPlanetPanel: NSView {
             sections.append(section)
         }
 
-        noticeLabel.font = NSFont.systemFont(ofSize: 10)
+        noticeLabel.font = NSFont.systemFont(ofSize: 11)
         noticeLabel.textColor = NSColor(calibratedWhite: 0.42, alpha: 1.0)
         noticeLabel.usesSingleLineMode = false
         noticeLabel.lineBreakMode = .byWordWrapping
         noticeLabel.cell?.wraps = true
         noticeLabel.stringValue =
             "概形は「天の北が上・東が左」の星図の向きで描画し、明縁は常に太陽の方向を向く。"
-            + "円盤の大きさは視直径に比例し、水星と金星で縮尺は共通。"
-            + "小さすぎて形が読めない場合のみ拡大し、倍率を図中に記す。\n"
+            + "円盤の下の物差しは円盤と同じ縮尺の角度スケールで、視直径を直接読み取れる。"
+            + "水星と金星は縮尺が異なるので、両者を比べるときもこの物差しを基準にすること。\n"
             + "位置計算は JPL の低精度軌道要素によるため、現象時刻には数時間程度の"
             + "誤差がある。光行差・光路時間・大気差の補正は行っていない。"
         addSubview(noticeLabel)
@@ -173,7 +205,7 @@ class InnerPlanetPanel: NSView {
 
     /// スクロールビューに入れるための必要高さ
     var preferredHeight: CGFloat {
-        return CGFloat(sections.count) * InnerPlanetSection.preferredHeight + 96
+        return CGFloat(sections.count) * InnerPlanetSection.preferredHeight + noticeHeight + 20
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -195,7 +227,7 @@ class InnerPlanetPanel: NSView {
             section.layoutContents()
             y += InnerPlanetSection.preferredHeight
         }
-        noticeLabel.frame = NSRect(x: 12, y: y + 8, width: bounds.width - 24, height: 76)
+        noticeLabel.frame = NSRect(x: 14, y: y + 8, width: bounds.width - 28, height: noticeHeight)
     }
 
     /// 表示を指定日時の内容に更新する

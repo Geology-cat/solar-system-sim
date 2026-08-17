@@ -163,10 +163,19 @@ struct InnerPlanetPhenomena {
         var found: [InnerPlanetEventKind: InnerPlanetEvent] = [:]
 
         // 離角の極大判定には 3 点が要るので、常に (t0, t1, t2) の三つ組を保持して
-        // 1 ステップずつずらしていく。合の判定は区間 [t0, t1] に対して行うので、
-        // 探索開始直後 (6 時間以内) に起こる合も取りこぼさない。
-        var t0 = start
-        var t1 = start.addingTimeInterval(coarseStep)
+        // 1 ステップずつずらしていく。
+        //
+        // 三つ組は探索開始の 1 ステップ手前から始める。
+        // 極大の判定条件 el(t1) > el(t0) かつ el(t1) >= el(t2) は
+        // 「t1 がサンプル列のなかで極大」という意味なので、
+        // t0 = start から始めると、極大が start の直後にある場合に
+        // el(t1) > el(t0) が成り立たず取りこぼす。
+        // (例: 2026-10-12 18:52 の水星東方最大離角を 16:00 から探すと、
+        //  次の東方最大離角として 4 か月先の 2027-02-03 を返してしまう)
+        // 1 ステップ手前から始めれば、start をまたぐ極大も三つ組の中央に入る。
+        // 探索開始より前に起こる現象は、記録する時点で除外する。
+        var t0 = start.addingTimeInterval(-coarseStep)
+        var t1 = start
         var dl0 = deltaLambda(for: planet, at: t0)
         var dl1 = deltaLambda(for: planet, at: t1)
         var el0 = elongation(for: planet, at: t0)
@@ -184,7 +193,9 @@ struct InnerPlanetPhenomena {
             if (dl0 < 0) != (dl1 < 0), abs(dl0) + abs(dl1) < 180.0 {
                 let tc = bisectZero(of: { deltaLambda(for: planet, at: $0) }, from: t0, to: t1)
                 let kind = conjunctionKind(for: planet, at: tc)
-                if found[kind] == nil {
+                // start より前の現象で枠を埋めてしまうと、
+                // 本来返すべき次回の現象が記録されなくなる
+                if tc >= start, found[kind] == nil {
                     found[kind] = InnerPlanetEvent(
                         kind: kind, date: tc,
                         elongationDeg: elongation(for: planet, at: tc)
@@ -199,7 +210,7 @@ struct InnerPlanetPhenomena {
                 let kind: InnerPlanetEventKind = deltaLambda(for: planet, at: tm) > 0
                     ? .greatestEasternElongation
                     : .greatestWesternElongation
-                if found[kind] == nil {
+                if tm >= start, found[kind] == nil {
                     found[kind] = InnerPlanetEvent(kind: kind, date: tm, elongationDeg: elong)
                 }
             }

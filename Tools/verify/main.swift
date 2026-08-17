@@ -312,6 +312,43 @@ for planet in NASAElements.innerPlanets {
           "東方最大離角の次は内合 → " + seq.map { $0.1 }.joined(separator: " → "))
 }
 
+// MARK: - 10. 探索開始の直後に起こる現象を取りこぼさないか
+
+title("10. 探索開始境界の扱い（回帰テスト）")
+// 極大の判定は連続する 3 点の比較なので、探索の始め方を誤ると
+// 「開始直後に起こる最大離角」を取りこぼし、1 会合周期先の現象を返してしまう。
+// 現象の直前 15 分・1 時間・3 時間・6 時間・12 時間から探索して、
+// いずれも同じ時刻が返ることを確かめる。
+for planet in NASAElements.innerPlanets {
+    let baseline = InnerPlanetPhenomena.upcomingEvents(for: planet, from: now)
+    var allOK = true
+    var detail: [String] = []
+
+    for event in baseline {
+        for offsetMinutes in [15.0, 60.0, 180.0, 360.0, 720.0] {
+            let probe = event.date.addingTimeInterval(-offsetMinutes * 60.0)
+            // 探索開始が現在より前になる組合せは対象外
+            if probe < now.addingTimeInterval(-400 * 86400) { continue }
+            let found = InnerPlanetPhenomena.upcomingEvents(for: planet, from: probe)
+                .first(where: { $0.kind == event.kind })
+            guard let f = found else {
+                allOK = false
+                detail.append("\(event.kind.label): \(Int(offsetMinutes))分前から探索 → 見つからず")
+                continue
+            }
+            // 同じ現象が返るべき (ずれても数秒以内)
+            if abs(f.date.timeIntervalSince(event.date)) > 60 {
+                allOK = false
+                detail.append("\(event.kind.label): \(Int(offsetMinutes))分前から探索 → "
+                              + "\(jst.string(from: f.date)) (期待 \(jst.string(from: event.date)))")
+            }
+        }
+    }
+    check(padR(planet.name, 8), allOK,
+          allOK ? "現象の 15分〜12時間前のどこから探索しても同じ時刻を返す"
+                : detail.joined(separator: " / "))
+}
+
 // MARK: - 集計
 
 print("")

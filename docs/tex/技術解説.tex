@@ -791,6 +791,23 @@ $\varepsilon(t_1) > \varepsilon(t_0)$ かつ $\varepsilon(t_1) \ge \varepsilon(t
 実装では\textbf{区間幅}を収束条件にしている。
 
 \begin{quote}\small
+\textbf{探索の始め方に注意が要る.}
+上の判定条件は「$t_1$ がサンプル列のなかで極大である」ことを意味するので、
+三つ組を探索開始時刻 $t_{\text{start}}$ そのものから始めると、
+極大が $t_{\text{start}}$ の直後にある場合に
+$\varepsilon(t_1) > \varepsilon(t_0)$ が成り立たず取りこぼす。
+実際、$t_0 = t_{\text{start}}$ とした実装では、
+2026-10-12 18:52 の水星の東方最大離角を同日 16:00 から探すと
+これを飛ばして 4 か月先の 2027-02-03 を返してしまった。
+三つ組を 1 ステップ手前（$t_{\text{start}} - 6\ \text{時間}$）から始めれば、
+$t_{\text{start}}$ をまたぐ極大も三つ組の中央に入る。
+このとき探索開始より前の現象も検出されうるが、
+それで「次回」の枠を埋めてしまうと本来返すべき現象が記録されなくなるので、
+記録する時点で $t < t_{\text{start}}$ のものを除外する。
+合の判定も同じ理由で区間 $[t_0, t_1]$ に対して行っている。
+\end{quote}
+
+\begin{quote}\small
 \textbf{最大離角の時刻が原理的に出しにくい理由.}
 極値の近くでは $\varepsilon(t) \simeq \varepsilon_{\max} - \tfrac{1}{2}|\varepsilon''|(t-t_{\max})^2$
 と振る舞う。したがって離角に $\delta\varepsilon$ の誤差があると、

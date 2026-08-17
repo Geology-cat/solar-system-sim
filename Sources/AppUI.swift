@@ -1,192 +1,6 @@
 import Cocoa
 
-private extension Notification.Name {
-    static let updateControls = Notification.Name("UpdateControls")
-}
-
-class AppState {
-    var date: Date = Date()
-    var zoom: CGFloat = 0.1
-    var pan: CGSize = .zero
-    var rotation: CGFloat = 0.0
-    var fixedBodyName: String? = nil
-    var isPlaying = false
-    var speed: Double = 1.0
-}
-
-class SolarSystemCanvas: NSView {
-    var state: AppState!
-    let baseAUSize: CGFloat = 100.0
-    private var lastDragLocation: NSPoint?
-
-    override var acceptsFirstResponder: Bool { return true }
-    override var isFlipped: Bool { return true }
-
-    private func screenPoint(au: CGPoint) -> CGPoint {
-        return CGPoint(x: au.x * baseAUSize, y: -au.y * baseAUSize)
-    }
-
-    private func effectiveRotation() -> CGFloat {
-        guard let fixedName = state.fixedBodyName,
-              let fixedBody = NASAElements.planets.first(where: { $0.name == fixedName }) else {
-            return state.rotation
-        }
-
-        let pos = OrbitalMechanics.position(for: fixedBody, at: state.date)
-        let currentAngleOnScreen = atan2(-pos.y, pos.x)
-        return CGFloat(Double.pi / 2.0 - currentAngleOnScreen)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.setFill()
-        dirtyRect.fill()
-
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-
-        ctx.translateBy(x: bounds.width / 2.0 + state.pan.width,
-                        y: bounds.height / 2.0 + state.pan.height)
-
-        let rotation = effectiveRotation()
-        ctx.rotate(by: rotation)
-        ctx.scaleBy(x: state.zoom, y: state.zoom)
-
-        NSColor.yellow.setFill()
-        let sunRadius: CGFloat = 10.0 / state.zoom
-        let sunRect = NSRect(x: -sunRadius, y: -sunRadius,
-                             width: sunRadius * 2.0, height: sunRadius * 2.0)
-        NSBezierPath(ovalIn: sunRect).fill()
-
-        for body in NASAElements.planets {
-            let auPoint = OrbitalMechanics.position(for: body, at: state.date)
-            let p = screenPoint(au: auPoint)
-
-            let orbitPoints = OrbitalMechanics.orbitPoints(for: body, at: state.date)
-            let path = NSBezierPath()
-            if let first = orbitPoints.first {
-                let firstPoint = screenPoint(au: first)
-                path.move(to: NSPoint(x: firstPoint.x, y: firstPoint.y))
-                for au in orbitPoints.dropFirst() {
-                    let point = screenPoint(au: au)
-                    path.line(to: NSPoint(x: point.x, y: point.y))
-                }
-                path.close()
-            }
-            NSColor(white: 0.5, alpha: 0.4).setStroke()
-            path.lineWidth = 1.0 / state.zoom
-            path.stroke()
-
-            let bodyRadius = max(2.0 / state.zoom, (8.0 * body.radiusMultiplier) / sqrt(state.zoom))
-            body.color.setFill()
-            let bodyRect = NSRect(x: p.x - bodyRadius, y: p.y - bodyRadius,
-                                  width: bodyRadius * 2.0, height: bodyRadius * 2.0)
-            NSBezierPath(ovalIn: bodyRect).fill()
-
-            NSGraphicsContext.saveGraphicsState()
-            let transform = NSAffineTransform()
-            transform.translateX(by: p.x, yBy: p.y + bodyRadius + (16.0 / state.zoom))
-            transform.rotate(byRadians: -rotation)
-            transform.concat()
-
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 16.0 / state.zoom, weight: .semibold),
-                .foregroundColor: NSColor.white
-            ]
-            let labelSize = (body.name as NSString).size(withAttributes: attrs)
-            (body.name as NSString).draw(
-                at: NSPoint(x: -labelSize.width / 2.0, y: -labelSize.height / 2.0),
-                withAttributes: attrs
-            )
-            NSGraphicsContext.restoreGraphicsState()
-        }
-    }
-
-    private func requestControlUpdate() {
-        NotificationCenter.default.post(name: .updateControls, object: nil)
-    }
-
-    override func scrollWheel(with event: NSEvent) {
-        state.pan.width += event.scrollingDeltaX
-        state.pan.height += event.scrollingDeltaY
-        needsDisplay = true
-        requestControlUpdate()
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        let loc = convert(event.locationInWindow, from: nil)
-        if event.clickCount == 2 {
-            hitTestForTarget(location: loc)
-        } else {
-            lastDragLocation = loc
-        }
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        let loc = convert(event.locationInWindow, from: nil)
-        if let last = lastDragLocation {
-            state.pan.width += loc.x - last.x
-            state.pan.height += loc.y - last.y
-        }
-        lastDragLocation = loc
-        needsDisplay = true
-        requestControlUpdate()
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        lastDragLocation = nil
-    }
-
-    override func magnify(with event: NSEvent) {
-        state.zoom *= (1.0 + event.magnification)
-        state.zoom = max(0.02, min(30.0, state.zoom))
-        needsDisplay = true
-        requestControlUpdate()
-    }
-
-    override func rotate(with event: NSEvent) {
-        state.rotation -= CGFloat(event.rotation * .pi / 180.0)
-        needsDisplay = true
-        requestControlUpdate()
-    }
-
-    func hitTestForTarget(location: NSPoint) {
-        let center = NSPoint(x: bounds.width / 2.0 + state.pan.width,
-                             y: bounds.height / 2.0 + state.pan.height)
-        let dx = location.x - center.x
-        let dy = location.y - center.y
-
-        let rotation = effectiveRotation()
-        let cosR = cos(-rotation)
-        let sinR = sin(-rotation)
-        let unrotatedX = dx * cosR - dy * sinR
-        let unrotatedY = dx * sinR + dy * cosR
-
-        let auX = (unrotatedX / state.zoom) / baseAUSize
-        let auY = -(unrotatedY / state.zoom) / baseAUSize
-
-        var closestBody: String?
-        var minDistance: Double = .infinity
-        for body in NASAElements.planets {
-            let pos = OrbitalMechanics.position(for: body, at: state.date)
-            let dist = hypot(pos.x - auX, pos.y - auY)
-            let threshold = max(
-                0.3 / state.zoom,
-                (4.0 * body.radiusMultiplier) / sqrt(state.zoom) / baseAUSize * 3.0
-            )
-
-            if dist < threshold && dist < minDistance {
-                minDistance = dist
-                closestBody = body.name
-            }
-        }
-
-        if let target = closestBody {
-            state.fixedBodyName = target
-            needsDisplay = true
-            requestControlUpdate()
-        }
-    }
-}
-
+/// 下部コントロールパネルの背景
 class ControlPanelView: NSView {
     override var isFlipped: Bool { return true }
 
@@ -204,12 +18,17 @@ class ControlPanelView: NSView {
     }
 }
 
+/// ウインドウ全体のレイアウトとコントロールの取りまとめ
 class MainContainerView: NSView {
     private let controlHeight: CGFloat = 110.0
 
     let appState = AppState()
     let canvas = SolarSystemCanvas()
     let controlPanel = ControlPanelView()
+
+    // 内惑星サイドパネル (スクロール可能)
+    let sidePanel = InnerPlanetPanel()
+    let sideScrollView = NSScrollView()
 
     let datePicker = NSDatePicker()
     let btnNow = NSButton(title: "現在", target: nil, action: nil)
@@ -218,6 +37,7 @@ class MainContainerView: NSView {
     let btnToggle = NSButton(title: "▶", target: nil, action: nil)
     let sliderSpeed = NSSlider(value: 1.0, minValue: 0.1, maxValue: 100.0, target: nil, action: nil)
     let lblSpeed = NSTextField(labelWithString: "1 日/秒")
+    let btnSidePanel = NSButton(title: "内惑星パネル", target: nil, action: nil)
 
     let lblScale = NSTextField(labelWithString: "表示スケール:")
     let btnZoomOut = NSButton(title: "−", target: nil, action: nil)
@@ -237,6 +57,16 @@ class MainContainerView: NSView {
 
         canvas.state = appState
         addSubview(canvas)
+
+        sideScrollView.hasVerticalScroller = true
+        sideScrollView.hasHorizontalScroller = false
+        sideScrollView.autohidesScrollers = true
+        sideScrollView.borderType = .noBorder
+        sideScrollView.drawsBackground = true
+        sideScrollView.backgroundColor = NSColor(calibratedRed: 0.96, green: 0.97, blue: 0.98, alpha: 1.0)
+        sideScrollView.documentView = sidePanel
+        addSubview(sideScrollView)
+
         addSubview(controlPanel)
 
         setupDateControls()
@@ -244,11 +74,14 @@ class MainContainerView: NSView {
         setupViewControls()
         setupLockControls()
 
-        NotificationCenter.default.addObserver(self, selector: #selector(updateControls), name: .updateControls, object: nil)
-        timer = Timer.scheduledTimer(timeInterval: 1.0 / 60.0, target: self, selector: #selector(tick), userInfo: nil, repeats: true)
+        NotificationCenter.default.addObserver(self, selector: #selector(updateControls),
+                                               name: .updateControls, object: nil)
+        timer = Timer.scheduledTimer(timeInterval: 1.0 / 60.0, target: self,
+                                     selector: #selector(tick), userInfo: nil, repeats: true)
 
         layoutControls()
         updateControls()
+        sidePanel.update(date: appState.date, force: true)
     }
 
     required init?(coder: NSCoder) {
@@ -260,6 +93,11 @@ class MainContainerView: NSView {
         timer?.invalidate()
     }
 
+    // MARK: - コントロールの生成
+
+    /// macOS 10.14 以降のダークモードでもコントロールの見た目を揃える。
+    /// (`NSAppearance.Name.aqua` は 10.14 で追加された定数なので、
+    ///  10.12 でも通る生文字列から生成する)
     private func applyLightAppearance(_ view: NSView) {
         view.appearance = NSAppearance(named: NSAppearance.Name(rawValue: "NSAppearanceNameAqua"))
     }
@@ -312,6 +150,13 @@ class MainContainerView: NSView {
         configureLabel(lblSpeed)
         lblSpeed.alignment = .right
         controlPanel.addSubview(lblSpeed)
+
+        btnSidePanel.target = self
+        btnSidePanel.action = #selector(toggleSidePanel)
+        btnSidePanel.setButtonType(.pushOnPushOff)
+        btnSidePanel.state = .on
+        configureButton(btnSidePanel)
+        controlPanel.addSubview(btnSidePanel)
     }
 
     private func setupViewControls() {
@@ -347,6 +192,8 @@ class MainContainerView: NSView {
         controlPanel.addSubview(lockLabel)
     }
 
+    // MARK: - レイアウト
+
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
         layoutControls()
@@ -354,7 +201,20 @@ class MainContainerView: NSView {
 
     private func layoutControls() {
         let canvasHeight = max(0, bounds.height - controlHeight)
-        canvas.frame = NSRect(x: 0, y: 0, width: bounds.width, height: canvasHeight)
+        let panelWidth = appState.showsInnerPlanetPanel ? InnerPlanetPanel.preferredWidth : 0
+        // キャンバスが潰れないよう、狭いウインドウではパネル幅を譲る
+        let effectivePanelWidth = min(panelWidth, max(0, bounds.width - 420))
+
+        canvas.frame = NSRect(x: 0, y: 0,
+                              width: bounds.width - effectivePanelWidth, height: canvasHeight)
+        sideScrollView.isHidden = effectivePanelWidth <= 0
+        sideScrollView.frame = NSRect(x: bounds.width - effectivePanelWidth, y: 0,
+                                      width: effectivePanelWidth, height: canvasHeight)
+        // ドキュメントビューはクリップ幅いっぱい・必要高さ分
+        let docWidth = max(1, effectivePanelWidth - (sideScrollView.verticalScroller?.frame.width ?? 15))
+        sidePanel.frame = NSRect(x: 0, y: 0, width: docWidth, height: sidePanel.preferredHeight)
+        sidePanel.layoutContents()
+
         controlPanel.frame = NSRect(x: 0, y: canvasHeight, width: bounds.width, height: controlHeight)
 
         datePicker.frame = NSRect(x: 20, y: 16, width: 230, height: 26)
@@ -364,6 +224,7 @@ class MainContainerView: NSView {
         btnToggle.frame = NSRect(x: 472, y: 14, width: 46, height: 30)
         sliderSpeed.frame = NSRect(x: 532, y: 17, width: 150, height: 25)
         lblSpeed.frame = NSRect(x: 690, y: 20, width: 90, height: 20)
+        btnSidePanel.frame = NSRect(x: max(792, bounds.width - 150), y: 14, width: 130, height: 30)
 
         lblScale.frame = NSRect(x: 20, y: 66, width: 95, height: 20)
         btnZoomOut.frame = NSRect(x: 120, y: 61, width: 40, height: 30)
@@ -372,13 +233,17 @@ class MainContainerView: NSView {
         btnReset.frame = NSRect(x: btnZoomIn.frame.maxX + 12, y: 61, width: 110, height: 30)
 
         let unlockX = max(btnReset.frame.maxX + 14, bounds.width - 112)
-        lockLabel.frame = NSRect(x: btnReset.frame.maxX + 14, y: 67, width: max(120, unlockX - btnReset.frame.maxX - 22), height: 20)
+        lockLabel.frame = NSRect(x: btnReset.frame.maxX + 14, y: 67,
+                                 width: max(120, unlockX - btnReset.frame.maxX - 22), height: 20)
         btnUnlock.frame = NSRect(x: unlockX, y: 61, width: 90, height: 30)
     }
+
+    // MARK: - アクション
 
     @objc func dateChanged() {
         appState.date = datePicker.dateValue
         canvas.needsDisplay = true
+        sidePanel.update(date: appState.date, force: true)
     }
 
     @objc func doNow() {
@@ -443,11 +308,23 @@ class MainContainerView: NSView {
         updateControls()
     }
 
+    @objc func toggleSidePanel() {
+        appState.showsInnerPlanetPanel = (btnSidePanel.state == .on)
+        layoutControls()
+        needsDisplay = true
+        if appState.showsInnerPlanetPanel {
+            sidePanel.update(date: appState.date, force: true)
+        }
+    }
+
     @objc func tick() {
         if appState.isPlaying {
             appState.date = appState.date.addingTimeInterval(86400.0 * (appState.speed / 60.0))
             datePicker.dateValue = appState.date
             canvas.needsDisplay = true
+            if appState.showsInnerPlanetPanel {
+                sidePanel.update(date: appState.date)
+            }
         }
     }
 
@@ -475,18 +352,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(appMenuItem)
 
         let appMenu = NSMenu()
-        appMenu.addItem(NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenu.addItem(NSMenuItem(title: "終了",
+                                   action: #selector(NSApplication.terminate(_:)),
+                                   keyEquivalent: "q"))
         appMenuItem.submenu = appMenu
         NSApp.mainMenu = menu
 
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 720),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "太陽系シミュレーター"
-        window.minSize = NSSize(width: 780, height: 520)
+        window.minSize = NSSize(width: 960, height: 560)
         window.center()
 
         let container = MainContainerView(frame: window.contentRect(forFrameRect: window.frame))
@@ -494,5 +373,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(container.canvas)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return true
     }
 }

@@ -1,10 +1,12 @@
 # ビルド生成物
 .build/
 build/
-dist/
-*.app/
-*.dmg
-DMG_Root/
+
+# 配布物 (dist/) は git で追跡する。
+# ただし dist/SolarSystemSim.app は DMG の中身とまったく同じものが
+# 18 MB あるだけなので追跡しない。中身が要るときは DMG をマウントするか
+# ./build.sh で作り直す。追跡したくなったら次の 1 行を消せばよい。
+dist/*.app/
 
 # macOS
 .DS_Store

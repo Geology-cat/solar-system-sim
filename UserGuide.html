@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>太陽系シミュレーター 取扱説明書</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Meiryo", sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9fa;
+        }
+        h1 {
+            border-bottom: 2px solid #0056b3;
+            color: #0056b3;
+            padding-bottom: 10px;
+        }
+        h2 {
+            border-left: 5px solid #0056b3;
+            padding-left: 10px;
+            margin-top: 30px;
+            color: #2c3e50;
+        }
+        h3 {
+            color: #34495e;
+        }
+        .container {
+            background: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .key-feature {
+            background-color: #e8f4f8;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 20px 0;
+        }
+        ul {
+            padding-left: 20px;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+        kbd {
+            background-color: #f1f1f1;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            padding: 2px 6px;
+            font-size: 0.9em;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>太陽系シミュレーター 取扱説明書</h1>
+
+    <div class="key-feature">
+        <strong>概要：</strong><br>
+        本アプリは、NASA JPLの近似軌道要素データに基づき、お好きな日時の太陽系（水星〜海王星＋冥王星）の天体配置を2Dでシミュレーション・描画するアプリケーションです。<br>实比率の広大な宇宙空間を自由に移動・拡大縮小して観察することができます。
+    </div>
+
+    <h2>1. 画面操作（ジェスチャー）</h2>
+    <p>宇宙空間のキャンバス部分は、マウスやトラックパッドを用いて直感的に操作できます。</p>
+    <ul>
+        <li><strong>移動（パン）</strong>：画面をドラッグ、またはトラックパッドを2本指でスワイプすることで視点を上下左右に移動できます。</li>
+        <li><strong>拡大・縮小（ズーム）</strong>：トラックパッドでのピンチイン・ピンチアウト操作で、画面の拡大・縮小が可能です。太陽系の全体像から、内惑星の近傍までシームレスに観察できます。</li>
+        <li><strong>回転</strong>：トラックパッドで2本指を使ってひねる操作（ローテーション）を行うと、画面全体を回転させることができます。</li>
+    </ul>
+
+    <h2>2. 天体の追従機能（ターゲットモード）</h2>
+    <p>特定の天体を中心にして、他の惑星がどのように動くかを観察できる機能です。</p>
+    <ul>
+        <li><strong>固定の手順</strong>：画面上に表示されている<strong>天体（惑星や太陽）をダブルクリック</strong>します。</li>
+        <li><strong>固定中の動作</strong>：選んだ天体が太陽から見て「常に画面の真下」に来るように画面が自動回転し、その視点を維持したままシミュレーションが進行します。</li>
+        <li><strong>固定の解除</strong>：固定中は画面下部にアラートが表示されます。赤い<strong>「固定解除」</strong>ボタンをクリックすると、元の北を上にした標準視点に戻ります。</li>
+    </ul>
+
+    <h2>3. コントロールパネルの操作</h2>
+    <p>画面下部のパネルから、日時や再生、表示スケールを制御します。</p>
+    
+    <h3>日時の設定と再生</h3>
+    <ul>
+        <li><strong>シミュレーション日時</strong>：カレンダーまたはキーボード入力で特定の日付を指定できます。</li>
+        <li><strong>クイックボタン</strong>：<code>現在</code>、<code>-1年</code>、<code>+1年</code> ボタンで、時間を素早くジャンプできます。</li>
+        <li><strong>再生 / 一時停止</strong>：プレイボタン（▶ / ⏸）を押すと、時間が自動的に進み始めます。</li>
+        <li><strong>速さスライダー</strong>：「1秒間に何日分進めるか」をスライダーで0.1日から100日/秒の間で設定できます。</li>
+    </ul>
+
+    <h3>視点（スケール）の設定</h3>
+    <ul>
+        <li><strong>虫眼鏡ボタン（－ / ＋）＆スライダー</strong>：ジェスチャーだけでなく、下部パネルのボタンやスライダーでも表示スケールを調整できます。</li>
+        <li><strong>視点リセット</strong>：移動、ズーム、回転、天体の固定状態をすべて初期状態（太陽中心、ズーム倍率1倍、回転なし）に戻します。表示を見失った際ご活用ください。</li>
+    </ul>
+
+    <h2>動作環境</h2>
+    <ul>
+        <li><strong>対応OS</strong>：macOS 13.0 (Ventura) 以降</li>
+        <li><strong>実行方法</strong>：生成された <code>SolarSystemSim.app</code> をダブルクリックして起動してください。（初回起動時にセキュリティ警告が出た場合は、右クリックから「開く」を選択してください）</li>
+    </ul>
+    
+    <hr style="margin-top: 40px; border: 0; border-top: 1px solid #eee;">
+    <p style="text-size: 0.8em; color: #7f8c8d; text-align: center;">© 2026 太陽系天体 2D Simulator</p>
+</div>
+
+</body>
+</html>

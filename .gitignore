@@ -1,0 +1,19 @@
+# ビルド生成物
+.build/
+build/
+dist/
+*.app/
+*.dmg
+DMG_Root/
+
+# macOS
+.DS_Store
+
+# LaTeX 中間ファイル
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz

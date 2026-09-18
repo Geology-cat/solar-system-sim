@@ -202,3 +202,7 @@ build.sh                       ビルドスクリプト
 - C. D. Murray and S. F. Dermott, *Solar System Dynamics*, Cambridge University Press, 1999
 - NASA Planetary Fact Sheet — <https://nssdc.gsfc.nasa.gov/planetary/factsheet/>
 - 国立天文台 暦計算室 — <https://eco.mtk.nao.ac.jp/koyomi/>
+
+## ライセンス
+
+MIT License. 詳細は [LICENSE](LICENSE) を参照。
